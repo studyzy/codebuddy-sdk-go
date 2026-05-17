@@ -2,6 +2,75 @@
 
 CodeBuddy Golang SDK 允许您在 Go 应用程序中集成 CodeBuddy 的 AI 能力。通过此 SDK，您可以轻松实现单次查询、管理多轮对话、配置自定义权限钩子 (Hooks) 以及扩展进程内 MCP 服务器。
 
+## 设计原则
+
+本项目遵循以下核心设计原则，确保代码质量和长期可维护性：
+
+### Golang 规范优先
+
+- 代码必须通过 `go vet` 和 `golangci-lint` 检查，零警告
+- 所有导出符号必须有符合 godoc 规范的注释（第一行以符号名称开头）
+- 错误处理使用 Go 惯用模式：显式返回 error，不使用 panic 处理业务逻辑
+- 代码格式统一使用 `gofmt` / `goimports`
+- 接口遵循"小接口"原则，优先定义在消费方
+- 并发代码正确使用 context、goroutine 和 channel
+
+### 测试要求
+
+- 所有新增或修改的公共函数/方法必须编写对应的单元测试
+- 测试覆盖率必须达到 60% 以上
+- 使用标准 `testing` 库 + table-driven tests 模式
+- Mock 对象通过接口注入实现
+- 集成测试使用 `//go:build integration` 构建标签隔离
+
+### 简洁与可维护性
+
+- YAGNI：不为假设的未来需求增加复杂度
+- 公共 API 表面积最小化，只暴露用户真正需要的功能
+- 避免过度抽象，依赖最小化，优先使用标准库
+
+## 架构概览
+
+```text
+┌───────────────────────────────────────────────────┐
+│                 Public API Layer                   │
+│                                                    │
+│  Query()          Client          Session          │
+│  (一次性查询)    (遗留入口)     (推荐多轮对话)      │
+│                     │               │              │
+│                     └───┬───────────┘              │
+│                         │ embeds                   │
+│                         ▼                          │
+│                    connCore                        │
+│              (共享连接核心逻辑)                      │
+│                         │                          │
+│                         ▼                          │
+│                   Transport                        │
+│                   (接口层)                          │
+│                    ╱       ╲                       │
+│        Subprocess        HTTP/ACP                  │
+│        Transport         Transport                 │
+│       (CLI 子进程)     (HTTP 通信)                  │
+└───────────────────────────────────────────────────┘
+```
+
+### 核心模块
+
+| 模块 | 文件 | 职责 |
+|:-----|:-----|:-----|
+| 包入口 | `codebuddy.go` | `Query()` 一次性查询 |
+| 客户端 | `client.go` | Client 工厂和遗留 API |
+| 会话 | `session.go` | Session 多轮对话管理 |
+| 连接核心 | `conn_core.go` | Client/Session 共享的连接管理逻辑 |
+| 传输层 | `transport.go`, `transport_subprocess.go`, `transport_http.go` | Transport 接口及实现 |
+| 消息类型 | `types_message.go` | Message/ContentBlock 类型定义 |
+| 配置选项 | `types_options.go` | Options/SessionOptions 等 |
+| MCP | `mcp.go`, `types_mcp.go` | 进程内 MCP Server |
+| Hooks | `types_hooks.go` | 事件钩子类型 |
+| 认证 | `auth.go` | 两阶段认证流程 |
+| 协议 | `protocol.go`, `message_parser.go` | 控制协议和消息解析 |
+| 错误 | `errors.go` | 错误类型定义 |
+
 ## 安装
 
 在您的 Go 项目中，使用 `go get` 安装 SDK：
@@ -179,6 +248,44 @@ opts := &codebuddy.Options{
 - `*ThinkingBlock`: 模型的思考过程。
 - `*ToolUseBlock`: AI 发起的工具调用请求。
 - `*ToolResultBlock`: 工具执行后的结果反馈。
+
+## 开发指南
+
+### 构建与测试
+
+```bash
+# 编译
+make build
+
+# 运行测试
+make test
+
+# 覆盖率报告
+make cover
+
+# 静态分析
+make vet
+make lint
+```
+
+### 提交规范
+
+提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+
+- `feat:` 新功能
+- `fix:` Bug 修复
+- `docs:` 文档更新
+- `test:` 测试相关
+- `refactor:` 代码重构
+
+### 质量门禁
+
+所有提交必须满足：
+
+1. `go vet ./...` 零警告
+2. `golangci-lint run ./...` 零警告
+3. `go test ./...` 全部通过
+4. 测试覆盖率 >= 60%
 
 ---
 

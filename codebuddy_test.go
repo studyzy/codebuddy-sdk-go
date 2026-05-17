@@ -533,4 +533,3 @@ func TestHandleQueryControlRequest_MCPMessage(t *testing.T) {
 		t.Errorf("expected 0 writes for mcp_message on non-subprocess, got %d", n)
 	}
 }
-

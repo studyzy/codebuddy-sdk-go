@@ -177,10 +177,10 @@ func TestNewExecutionError(t *testing.T) {
 	t.Run("with empty errors list", func(t *testing.T) {
 		err := NewExecutionError([]string{}, "unknown")
 
-		if err.Message != "Execution failed" {
-			t.Fatalf("Message: got %q, want \"Execution failed\"", err.Message)
+		if err.Message != "执行失败" {
+			t.Fatalf("Message: got %q, want \"执行失败\"", err.Message)
 		}
-		if err.Error() != "Execution failed" {
+		if err.Error() != "执行失败" {
 			t.Errorf("Error(): got %q", err.Error())
 		}
 	})
@@ -188,8 +188,8 @@ func TestNewExecutionError(t *testing.T) {
 	t.Run("with nil errors list", func(t *testing.T) {
 		err := NewExecutionError(nil, "none")
 
-		if err.Message != "Execution failed" {
-			t.Fatalf("Message: got %q, want \"Execution failed\"", err.Message)
+		if err.Message != "执行失败" {
+			t.Fatalf("Message: got %q, want \"执行失败\"", err.Message)
 		}
 	})
 

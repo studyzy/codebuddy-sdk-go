@@ -64,7 +64,7 @@ func printAndWait(ctx context.Context, session *codebuddy.Session) (*codebuddy.R
 		select {
 		case msg, ok := <-session.Stream():
 			if !ok {
-				return nil, fmt.Errorf("session closed")
+				return nil, fmt.Errorf("会话已关闭")
 			}
 			switch m := msg.(type) {
 			case *codebuddy.AssistantMessage:

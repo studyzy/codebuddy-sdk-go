@@ -82,9 +82,9 @@ func (e *ControlRequestError) Error() string {
 
 // ExecutionError 表示执行失败时的错误，来源于 ResultMessage，
 // 涵盖认证错误、API 错误等各类执行阶段的失败情况。
-// 构造时：若 Errors 不为空则取第一个元素作为 Message，否则 Message 为 "Execution failed"。
+// 构造时：若 Errors 不为空则取第一个元素作为 Message，否则 Message 为 "执行失败"。
 type ExecutionError struct {
-	// Message 错误描述信息（取自 Errors[0] 或默认值 "Execution failed"）
+	// Message 错误描述信息（取自 Errors[0] 或默认值 "执行失败"）
 	Message string
 	// Errors 详细错误列表
 	Errors []string
@@ -93,9 +93,9 @@ type ExecutionError struct {
 }
 
 // NewExecutionError 根据错误列表和子类型构造 ExecutionError。
-// 若 errors 不为空，则将第一个元素设为 Message；否则 Message 为 "Execution failed"。
+// 若 errors 不为空，则将第一个元素设为 Message；否则 Message 为 "执行失败"。
 func NewExecutionError(errors []string, subtype string) *ExecutionError {
-	msg := "Execution failed"
+	msg := "执行失败"
 	if len(errors) > 0 {
 		msg = errors[0]
 	}

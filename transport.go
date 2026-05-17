@@ -44,3 +44,6 @@ type Transport interface {
 	// 适用于不关心响应结果的场景（如 interrupt、set_permission_mode 静默同步等）
 	SendControlRequestNoWait(ctx context.Context, payload map[string]any) error
 }
+
+// 编译时接口合规性断言
+var _ Transport = (*SubprocessTransport)(nil)
