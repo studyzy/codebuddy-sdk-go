@@ -80,6 +80,8 @@ type ResultMessage struct {
 	Result *string
 	// StructuredOutput 是结构化输出内容。
 	StructuredOutput any
+	// PermissionDenials 是被拒绝的权限请求列表。
+	PermissionDenials []PermissionDenial
 	// Errors 是错误列表。
 	Errors []string
 	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
@@ -123,6 +125,102 @@ type ErrorMessage struct {
 // messageType 返回消息类型标识。
 func (m *ErrorMessage) messageType() string { return "error" }
 
+// TopicMessage 表示会话主题/标题更新消息，type="topic"。
+type TopicMessage struct {
+	// Topic 是会话主题文本。
+	Topic string
+	// SessionID 是所属会话 ID。
+	SessionID string
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *TopicMessage) messageType() string { return "topic" }
+
+// ToolProgressMessage 表示工具执行进度消息，type="tool_progress"。
+type ToolProgressMessage struct {
+	// ToolUseID 是工具调用 ID。
+	ToolUseID string
+	// ToolName 是工具名称。
+	ToolName string
+	// ParentToolUseID 是父工具调用 ID。
+	ParentToolUseID *string
+	// ElapsedTimeSeconds 是已用时间（秒）。
+	ElapsedTimeSeconds float64
+	// UUID 是事件唯一标识符。
+	UUID string
+	// SessionID 是所属会话 ID。
+	SessionID string
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *ToolProgressMessage) messageType() string { return "tool_progress" }
+
+// FileHistorySnapshotMessage 表示文件历史快照消息，type="file-history-snapshot"。
+// 包含文件检查点备份信息，用于差异计算。
+type FileHistorySnapshotMessage struct {
+	// Timestamp 是快照时间戳。
+	Timestamp int64
+	// IsSnapshotUpdate 表示是否为快照更新。
+	IsSnapshotUpdate bool
+	// Snapshot 是快照数据。
+	Snapshot map[string]any
+	// ID 是快照 ID（可选）。
+	ID *string
+	// ParentID 是父快照 ID（可选）。
+	ParentID *string
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *FileHistorySnapshotMessage) messageType() string { return "file-history-snapshot" }
+
+// CompactBoundaryMessage 表示上下文压缩边界消息，type="system" subtype="compact_boundary"。
+// 标记上下文压缩发生的位置，包含压缩前的 token 数量等元数据。
+type CompactBoundaryMessage struct {
+	// UUID 是事件唯一标识符。
+	UUID string
+	// SessionID 是所属会话 ID。
+	SessionID string
+	// CompactMetadata 是压缩元数据（包含 trigger、pre_tokens 等字段）。
+	CompactMetadata map[string]any
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *CompactBoundaryMessage) messageType() string { return "system" }
+
+// StatusMessage 表示系统状态消息，type="system" subtype="status"。
+// 提供 CLI 当前处理状态信息（如上下文压缩中）。
+type StatusMessage struct {
+	// Status 是状态值（如 "compacting"），nil 表示空闲状态。
+	Status *string
+	// UUID 是事件唯一标识符。
+	UUID string
+	// SessionID 是所属会话 ID。
+	SessionID string
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *StatusMessage) messageType() string { return "system" }
+
+// PermissionDenial 表示被拒绝的权限请求记录。
+type PermissionDenial struct {
+	// ToolName 是被拒绝的工具名称。
+	ToolName string
+	// ToolUseID 是工具调用 ID。
+	ToolUseID string
+	// ToolInput 是工具调用输入参数。
+	ToolInput map[string]any
+}
+
 // AttachRawJSON 将 CLI 原始 JSON 绑定到已解析的消息对象。
 func AttachRawJSON(msg Message, raw json.RawMessage) {
 	if len(raw) == 0 || msg == nil {
@@ -142,6 +240,16 @@ func AttachRawJSON(msg Message, raw json.RawMessage) {
 		m.RawJSON = copied
 	case *ErrorMessage:
 		m.RawJSON = copied
+	case *TopicMessage:
+		m.RawJSON = copied
+	case *ToolProgressMessage:
+		m.RawJSON = copied
+	case *FileHistorySnapshotMessage:
+		m.RawJSON = copied
+	case *CompactBoundaryMessage:
+		m.RawJSON = copied
+	case *StatusMessage:
+		m.RawJSON = copied
 	}
 }
 
@@ -159,6 +267,16 @@ func RawJSONOf(msg Message) json.RawMessage {
 	case *StreamEvent:
 		return m.RawJSON
 	case *ErrorMessage:
+		return m.RawJSON
+	case *TopicMessage:
+		return m.RawJSON
+	case *ToolProgressMessage:
+		return m.RawJSON
+	case *FileHistorySnapshotMessage:
+		return m.RawJSON
+	case *CompactBoundaryMessage:
+		return m.RawJSON
+	case *StatusMessage:
 		return m.RawJSON
 	default:
 		return nil
@@ -219,3 +337,35 @@ type ToolResultBlock struct {
 
 // contentBlockType 返回内容块类型标识。
 func (b *ToolResultBlock) contentBlockType() string { return "tool_result" }
+
+// RedactedThinkingBlock 表示脱敏思考内容块，type="redacted_thinking"。
+// 包含加密/脱敏的思考数据，当思考内容无法显示时（如安全原因）使用。
+type RedactedThinkingBlock struct {
+	// Data 是加密/脱敏的思考数据。
+	Data string
+}
+
+// contentBlockType 返回内容块类型标识。
+func (b *RedactedThinkingBlock) contentBlockType() string { return "redacted_thinking" }
+
+// ImageSource 表示图片来源信息，支持 base64 编码和 URL 两种模式。
+type ImageSource struct {
+	// Type 是来源类型，可选值："base64" 或 "url"。
+	Type string
+	// MediaType 是 MIME 类型（仅 base64 模式有效），如 "image/png"。
+	MediaType string
+	// Data 是 Base64 编码的图片数据（仅 base64 模式有效）。
+	Data string
+	// URL 是图片 URL（仅 url 模式有效）。
+	URL string
+}
+
+// ImageContentBlock 表示图片内容块，type="image"。
+// 支持 base64 编码和 URL 两种图片来源。
+type ImageContentBlock struct {
+	// Source 是图片来源信息。
+	Source ImageSource
+}
+
+// contentBlockType 返回内容块类型标识。
+func (b *ImageContentBlock) contentBlockType() string { return "image" }

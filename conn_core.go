@@ -498,6 +498,39 @@ func (c *connCore) unsubscribeFromCommands(handler NotificationHandler) {
 	}
 }
 
+// --- 动态配置更新 ---
+
+// setConfig 通过 set_config 控制请求动态更新 CLI 配置。
+// 仅在连接后可调用。返回已更新的配置项和失败的配置项。
+func (c *connCore) setConfig(ctx context.Context, sessionID string, config map[string]any, closedMsg string) (*SetConfigResult, error) {
+	payload := map[string]any{
+		"subtype": "set_config",
+		"config":  config,
+	}
+	if sessionID != "" {
+		payload["session_id"] = sessionID
+	}
+	resp, err := c.sendControlRequest(ctx, payload, closedMsg)
+	if err != nil {
+		return nil, err
+	}
+	result := &SetConfigResult{}
+	if updated, ok := resp["updated"].(map[string]any); ok {
+		result.Updated = updated
+	}
+	if errors, ok := resp["errors"].(map[string]any); ok {
+		result.Errors = make(map[string]string, len(errors))
+		for k, v := range errors {
+			if s, ok := v.(string); ok {
+				result.Errors[k] = s
+			}
+		}
+	}
+	return result, nil
+}
+
+// --- 中断信号 ---
+
 // interrupt 发送中断信号，触发 CLI 停止当前执行。
 // extraFields 允许调用者添加额外字段（如 Session 的 session_id）。
 func (c *connCore) interrupt(ctx context.Context, closedMsg string, extraFields map[string]any) error {

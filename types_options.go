@@ -34,6 +34,40 @@ type AgentDefinition struct {
 	Model *string
 }
 
+// SandboxSettings 表示沙箱执行环境配置。
+type SandboxSettings struct {
+	// Enabled 表示是否启用沙箱（nil 表示使用默认值）。
+	Enabled *bool
+	// AutoAllowBashIfSandboxed 表示沙箱模式下是否自动允许 Bash 命令。
+	AutoAllowBashIfSandboxed *bool
+	// Network 是沙箱网络权限配置。
+	Network *NetworkSettings
+}
+
+// NetworkSettings 表示沙箱网络权限配置。
+type NetworkSettings struct {
+	// AllowLocalBinding 表示是否允许本地端口绑定。
+	AllowLocalBinding *bool
+	// AllowUnixSockets 是允许的 Unix socket 路径列表。
+	AllowUnixSockets []string
+}
+
+// JsonSchemaOutputFormat 表示 JSON Schema 结构化输出格式。
+type JsonSchemaOutputFormat struct {
+	// Type 是输出格式类型，固定为 "json_schema"。
+	Type string
+	// Schema 是 JSON Schema 定义。
+	Schema map[string]any
+}
+
+// SetConfigResult 表示动态配置更新的结果。
+type SetConfigResult struct {
+	// Updated 是已成功更新的配置键值对。
+	Updated map[string]any
+	// Errors 是更新失败的配置项及错误信息。
+	Errors map[string]string
+}
+
 // =============================================================================
 // Options 结构体
 // =============================================================================
@@ -127,4 +161,33 @@ type Options struct {
 
 	// MaxThinkingTokens 是最大思考 Token 数（已废弃，请使用 Thinking.BudgetTokens）。
 	MaxThinkingTokens *int
+
+	// ---- 新增高级选项（对齐 Node.js SDK）----
+
+	// MaxBudgetUsd 是最大预算限制（美元）。
+	MaxBudgetUsd *float64
+	// OutputFormat 是结构化输出格式配置（JSON Schema）。
+	OutputFormat *JsonSchemaOutputFormat
+	// PersistSession 控制会话持久化，false 表示禁用持久化（nil 表示使用默认值）。
+	PersistSession *bool
+	// EnableFileCheckpointing 表示是否启用文件检查点。
+	EnableFileCheckpointing bool
+	// RequestTimeoutMs 是控制请求超时时间（毫秒），SDK 内部使用。
+	RequestTimeoutMs *int
+	// Sandbox 是沙箱执行环境配置。
+	Sandbox *SandboxSettings
+	// Environment 是认证环境标识（如 "external"、"internal"、"ioa"、"cloudhosted"）。
+	Environment *string
+	// Endpoint 是自定义端点 URL（用于自托管环境）。
+	Endpoint *string
+	// ResumeSessionAt 是指定恢复到的消息 ID。
+	ResumeSessionAt *string
+	// PermissionPromptToolName 是 MCP 工具名称，用于权限提示。
+	PermissionPromptToolName *string
+	// TraceId 是分布式追踪 ID，传播到 CLI 和模型请求。
+	TraceId *string
+	// ParentSpanId 是父 Span ID，用于将 CLI 追踪链接为上游调用的子 span。
+	ParentSpanId *string
+	// StrictMcpConfig 表示是否启用 MCP 配置严格校验模式。
+	StrictMcpConfig bool
 }

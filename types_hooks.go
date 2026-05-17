@@ -63,10 +63,14 @@ type HookJSONOutput struct {
 	SuppressOutput *bool
 	// StopReason 是停止原因说明。
 	StopReason *string
-	// Decision 是决策结果，可选值："block"。
+	// Decision 是决策结果，可选值："approve" | "block"。
 	Decision *string
 	// Reason 是决策原因说明。
 	Reason *string
+	// SystemMessage 是 Hook 注入的系统消息文本。
+	SystemMessage *string
+	// HookSpecificOutput 是 Hook 特定的额外输出数据。
+	HookSpecificOutput map[string]any
 }
 
 // HookContext 表示 Hook 回调附加上下文，主要用于公开类型对齐。

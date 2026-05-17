@@ -16,6 +16,12 @@ const (
 	PermissionModePlan PermissionMode = "plan"
 	// PermissionModeBypassPermissions 表示绕过所有权限检查。
 	PermissionModeBypassPermissions PermissionMode = "bypassPermissions"
+	// PermissionModeDelegate 表示委托权限决策给外部系统。
+	PermissionModeDelegate PermissionMode = "delegate"
+	// PermissionModeDontAsk 表示不弹出权限确认提示。
+	PermissionModeDontAsk PermissionMode = "dontAsk"
+	// PermissionModeFullAccess 表示完全访问模式，无任何限制。
+	PermissionModeFullAccess PermissionMode = "fullAccess"
 )
 
 // Ptr 返回 PermissionMode 的指针，便于在 Options 中赋值。
@@ -45,6 +51,10 @@ const (
 	HookSubagentStart HookEvent = "SubagentStart"
 	// HookPermissionRequest 表示权限请求时触发的事件。
 	HookPermissionRequest HookEvent = "PermissionRequest"
+	// HookSessionStart 表示会话启动时触发的事件。
+	HookSessionStart HookEvent = "SessionStart"
+	// HookSessionEnd 表示会话结束时触发的事件。
+	HookSessionEnd HookEvent = "SessionEnd"
 )
 
 // SettingSource 表示配置来源。

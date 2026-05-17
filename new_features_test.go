@@ -981,3 +981,216 @@ func injectControlResponse(t *testing.T, tr *mockTransport, responsePayload map[
 		},
 	})
 }
+
+// ============================================================
+// T012: buildArgs 新增 PermissionMode 测试
+// ============================================================
+
+func TestBuildArgs_PermissionMode_Delegate(t *testing.T) {
+	tr := newTransportForTest(&Options{PermissionMode: PermissionModeDelegate.Ptr()})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--permission-mode", "delegate")
+}
+
+func TestBuildArgs_PermissionMode_DontAsk(t *testing.T) {
+	tr := newTransportForTest(&Options{PermissionMode: PermissionModeDontAsk.Ptr()})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--permission-mode", "dontAsk")
+}
+
+func TestBuildArgs_PermissionMode_FullAccess(t *testing.T) {
+	tr := newTransportForTest(&Options{PermissionMode: PermissionModeFullAccess.Ptr()})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--permission-mode", "fullAccess")
+}
+
+// ============================================================
+// T032: buildArgs 新增 Options 字段测试
+// ============================================================
+
+func TestBuildArgs_MaxBudgetUsd(t *testing.T) {
+	budget := 5.0
+	tr := newTransportForTest(&Options{MaxBudgetUsd: &budget})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--max-budget-usd", "5")
+}
+
+func TestBuildArgs_PersistSession_False(t *testing.T) {
+	f := false
+	tr := newTransportForTest(&Options{PersistSession: &f})
+	args := tr.buildArgs()
+	assertContainsArg(t, args, "--no-persist-session")
+}
+
+func TestBuildArgs_PersistSession_True_NoFlag(t *testing.T) {
+	tt := true
+	tr := newTransportForTest(&Options{PersistSession: &tt})
+	args := tr.buildArgs()
+	for _, a := range args {
+		if a == "--no-persist-session" {
+			t.Error("--no-persist-session should not appear when PersistSession is true")
+		}
+	}
+}
+
+func TestBuildArgs_EnableFileCheckpointing(t *testing.T) {
+	tr := newTransportForTest(&Options{EnableFileCheckpointing: true})
+	args := tr.buildArgs()
+	assertContainsArg(t, args, "--enable-file-checkpointing")
+}
+
+func TestBuildArgs_Sandbox_Disabled(t *testing.T) {
+	f := false
+	tr := newTransportForTest(&Options{Sandbox: &SandboxSettings{Enabled: &f}})
+	args := tr.buildArgs()
+	assertContainsArg(t, args, "--sandbox=false")
+}
+
+func TestBuildArgs_Environment(t *testing.T) {
+	env := "internal"
+	tr := newTransportForTest(&Options{Environment: &env})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--environment", "internal")
+}
+
+func TestBuildArgs_Endpoint(t *testing.T) {
+	ep := "https://custom.example.com"
+	tr := newTransportForTest(&Options{Endpoint: &ep})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--endpoint", "https://custom.example.com")
+}
+
+func TestBuildArgs_ResumeSessionAt(t *testing.T) {
+	at := "msg-123"
+	tr := newTransportForTest(&Options{ResumeSessionAt: &at})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--resume-session-at", "msg-123")
+}
+
+func TestBuildArgs_PermissionPromptToolName(t *testing.T) {
+	tn := "my-mcp-tool"
+	tr := newTransportForTest(&Options{PermissionPromptToolName: &tn})
+	args := tr.buildArgs()
+	assertContainsArgs(t, args, "--permission-prompt-tool-name", "my-mcp-tool")
+}
+
+func TestBuildArgs_StrictMcpConfig(t *testing.T) {
+	tr := newTransportForTest(&Options{StrictMcpConfig: true})
+	args := tr.buildArgs()
+	assertContainsArg(t, args, "--strict-mcp-config")
+}
+
+// ============================================================
+// T023: executeHook systemMessage/hookSpecificOutput 测试
+// ============================================================
+
+func TestExecuteHook_NewOutputFields(t *testing.T) {
+	ctx := context.Background()
+	sysMsg := "injected system message"
+	registry := HookCallbackRegistry{
+		"hook-1": func(ctx context.Context, input map[string]any, toolUseID *string) (HookJSONOutput, error) {
+			return HookJSONOutput{
+				SystemMessage:      &sysMsg,
+				HookSpecificOutput: map[string]any{"custom": "data"},
+			}, nil
+		},
+	}
+	output := executeHook(ctx, "hook-1", nil, nil, registry)
+	if output["systemMessage"] != "injected system message" {
+		t.Errorf("systemMessage: got %v", output["systemMessage"])
+	}
+	hso, ok := output["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatal("hookSpecificOutput not present")
+	}
+	if hso["custom"] != "data" {
+		t.Errorf("hookSpecificOutput[custom]: got %v", hso["custom"])
+	}
+}
+
+// ============================================================
+// T027: SetConfig 测试
+// ============================================================
+
+func TestConnCore_SetConfig(t *testing.T) {
+	c := &connCore{}
+	initConnCore(c, &Options{}, PermissionModeDefault, "")
+
+	tr := newMockTransport(100)
+	c.mu.Lock()
+	c.transport = tr
+	c.mu.Unlock()
+
+	// 启动 goroutine 模拟响应
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		tr.mu.Lock()
+		n := len(tr.written)
+		tr.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		reqMsg := tr.writtenJSON(0)
+		reqID, _ := reqMsg["request_id"].(string)
+		// 直接路由响应到 connCore
+		c.routeControlResponse(map[string]any{
+			"response": map[string]any{
+				"request_id": reqID,
+				"subtype":    "success",
+				"response": map[string]any{
+					"updated": map[string]any{"thinking": "disabled"},
+					"errors":  map[string]any{"bad_key": "unknown config key"},
+				},
+			},
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := c.setConfig(ctx, "test-session", map[string]any{"thinking": "disabled"}, "not connected")
+	if err != nil {
+		t.Fatalf("setConfig error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Updated["thinking"] != "disabled" {
+		t.Errorf("Updated[thinking]: got %v", result.Updated["thinking"])
+	}
+	if result.Errors["bad_key"] != "unknown config key" {
+		t.Errorf("Errors[bad_key]: got %v", result.Errors["bad_key"])
+	}
+}
+
+// ============================================================
+// T033: SessionOptions merge 测试
+// ============================================================
+
+func TestSessionOptions_MergeToOpts(t *testing.T) {
+	baseOpts := &Options{
+		Model: ptrStr("base-model"),
+	}
+	so := &SessionOptions{
+		Thinking: &ThinkingConfig{Type: "adaptive"},
+		Effort:   EffortHigh.Ptr(),
+		Cwd:      ptrStr("/custom/path"),
+	}
+	mergeSessionOptsToOpts(baseOpts, so)
+
+	if baseOpts.Thinking == nil || baseOpts.Thinking.Type != "adaptive" {
+		t.Errorf("Thinking not merged: got %v", baseOpts.Thinking)
+	}
+	if baseOpts.Effort == nil || *baseOpts.Effort != EffortHigh {
+		t.Errorf("Effort not merged: got %v", baseOpts.Effort)
+	}
+	if baseOpts.Cwd == nil || *baseOpts.Cwd != "/custom/path" {
+		t.Errorf("Cwd not merged: got %v", baseOpts.Cwd)
+	}
+	// Model should not be overwritten since SessionOptions.Model was nil
+	if baseOpts.Model == nil || *baseOpts.Model != "base-model" {
+		t.Errorf("Model should remain base-model, got %v", baseOpts.Model)
+	}
+}
+
+func ptrStr(s string) *string { return &s }

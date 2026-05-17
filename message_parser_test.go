@@ -531,3 +531,289 @@ func TestGetInt(t *testing.T) {
 		t.Errorf("missing: got %d, want 0", n)
 	}
 }
+
+// ---- T018: ParseContentBlock 新增类型测试 ----
+
+func TestParseContentBlock_RedactedThinking(t *testing.T) {
+	data := map[string]any{
+		"type": "redacted_thinking",
+		"data": "encrypted-data-abc",
+	}
+	b := ParseContentBlock(data)
+	if b == nil {
+		t.Fatal("ParseContentBlock returned nil for redacted_thinking")
+	}
+	rtb, ok := b.(*RedactedThinkingBlock)
+	if !ok {
+		t.Fatalf("expected *RedactedThinkingBlock, got %T", b)
+	}
+	if rtb.Data != "encrypted-data-abc" {
+		t.Errorf("Data: got %q, want \"encrypted-data-abc\"", rtb.Data)
+	}
+}
+
+func TestParseContentBlock_ImageBase64(t *testing.T) {
+	data := map[string]any{
+		"type": "image",
+		"source": map[string]any{
+			"type":       "base64",
+			"media_type": "image/png",
+			"data":       "iVBORw0KGgo=",
+		},
+	}
+	b := ParseContentBlock(data)
+	if b == nil {
+		t.Fatal("ParseContentBlock returned nil for image")
+	}
+	img, ok := b.(*ImageContentBlock)
+	if !ok {
+		t.Fatalf("expected *ImageContentBlock, got %T", b)
+	}
+	if img.Source.Type != "base64" {
+		t.Errorf("Source.Type: got %q, want \"base64\"", img.Source.Type)
+	}
+	if img.Source.MediaType != "image/png" {
+		t.Errorf("Source.MediaType: got %q, want \"image/png\"", img.Source.MediaType)
+	}
+	if img.Source.Data != "iVBORw0KGgo=" {
+		t.Errorf("Source.Data: got %q", img.Source.Data)
+	}
+}
+
+func TestParseContentBlock_ImageURL(t *testing.T) {
+	data := map[string]any{
+		"type": "image",
+		"source": map[string]any{
+			"type": "url",
+			"url":  "https://example.com/image.png",
+		},
+	}
+	b := ParseContentBlock(data)
+	img, ok := b.(*ImageContentBlock)
+	if !ok {
+		t.Fatalf("expected *ImageContentBlock, got %T", b)
+	}
+	if img.Source.Type != "url" {
+		t.Errorf("Source.Type: got %q, want \"url\"", img.Source.Type)
+	}
+	if img.Source.URL != "https://example.com/image.png" {
+		t.Errorf("Source.URL: got %q", img.Source.URL)
+	}
+}
+
+// ---- T019: ParseMessage 新增消息类型测试 ----
+
+func TestParseMessage_TopicMessage(t *testing.T) {
+	data := map[string]any{
+		"type":       "topic",
+		"topic":      "Session Title",
+		"session_id": "abc-123",
+	}
+	msg := ParseMessage(data)
+	tm, ok := msg.(*TopicMessage)
+	if !ok {
+		t.Fatalf("expected *TopicMessage, got %T", msg)
+	}
+	if tm.Topic != "Session Title" {
+		t.Errorf("Topic: got %q, want \"Session Title\"", tm.Topic)
+	}
+	if tm.SessionID != "abc-123" {
+		t.Errorf("SessionID: got %q", tm.SessionID)
+	}
+}
+
+func TestParseMessage_ToolProgressMessage(t *testing.T) {
+	data := map[string]any{
+		"type":                 "tool_progress",
+		"tool_use_id":         "tu-123",
+		"tool_name":           "Bash",
+		"parent_tool_use_id":  "parent-1",
+		"elapsed_time_seconds": 5.2,
+		"uuid":                "ev-1",
+		"session_id":          "s-1",
+	}
+	msg := ParseMessage(data)
+	tp, ok := msg.(*ToolProgressMessage)
+	if !ok {
+		t.Fatalf("expected *ToolProgressMessage, got %T", msg)
+	}
+	if tp.ToolUseID != "tu-123" {
+		t.Errorf("ToolUseID: got %q", tp.ToolUseID)
+	}
+	if tp.ToolName != "Bash" {
+		t.Errorf("ToolName: got %q", tp.ToolName)
+	}
+	if tp.ParentToolUseID == nil || *tp.ParentToolUseID != "parent-1" {
+		t.Errorf("ParentToolUseID: got %v", tp.ParentToolUseID)
+	}
+	if tp.ElapsedTimeSeconds != 5.2 {
+		t.Errorf("ElapsedTimeSeconds: got %f, want 5.2", tp.ElapsedTimeSeconds)
+	}
+}
+
+func TestParseMessage_FileHistorySnapshotMessage(t *testing.T) {
+	data := map[string]any{
+		"type":             "file-history-snapshot",
+		"timestamp":        float64(1700000000),
+		"isSnapshotUpdate": true,
+		"snapshot": map[string]any{
+			"messageId": "msg-1",
+		},
+		"id":       "snap-1",
+		"parentId": "snap-0",
+	}
+	msg := ParseMessage(data)
+	fh, ok := msg.(*FileHistorySnapshotMessage)
+	if !ok {
+		t.Fatalf("expected *FileHistorySnapshotMessage, got %T", msg)
+	}
+	if fh.Timestamp != 1700000000 {
+		t.Errorf("Timestamp: got %d", fh.Timestamp)
+	}
+	if !fh.IsSnapshotUpdate {
+		t.Error("IsSnapshotUpdate: expected true")
+	}
+	if fh.ID == nil || *fh.ID != "snap-1" {
+		t.Errorf("ID: got %v", fh.ID)
+	}
+	if fh.ParentID == nil || *fh.ParentID != "snap-0" {
+		t.Errorf("ParentID: got %v", fh.ParentID)
+	}
+}
+
+// ---- T020: system subtype 分派与 permission_denials 测试 ----
+
+func TestParseMessage_CompactBoundaryMessage(t *testing.T) {
+	data := map[string]any{
+		"type":       "system",
+		"subtype":    "compact_boundary",
+		"uuid":       "cb-1",
+		"session_id": "s-1",
+		"compact_metadata": map[string]any{
+			"trigger":    "auto",
+			"pre_tokens": float64(50000),
+		},
+	}
+	msg := ParseMessage(data)
+	cb, ok := msg.(*CompactBoundaryMessage)
+	if !ok {
+		t.Fatalf("expected *CompactBoundaryMessage, got %T", msg)
+	}
+	if cb.UUID != "cb-1" {
+		t.Errorf("UUID: got %q", cb.UUID)
+	}
+	if cb.CompactMetadata["trigger"] != "auto" {
+		t.Errorf("CompactMetadata[trigger]: got %v", cb.CompactMetadata["trigger"])
+	}
+}
+
+func TestParseMessage_StatusMessage(t *testing.T) {
+	data := map[string]any{
+		"type":       "system",
+		"subtype":    "status",
+		"status":     "compacting",
+		"uuid":       "st-1",
+		"session_id": "s-1",
+	}
+	msg := ParseMessage(data)
+	sm, ok := msg.(*StatusMessage)
+	if !ok {
+		t.Fatalf("expected *StatusMessage, got %T", msg)
+	}
+	if sm.Status == nil || *sm.Status != "compacting" {
+		t.Errorf("Status: got %v, want \"compacting\"", sm.Status)
+	}
+}
+
+func TestParseMessage_SystemInit_StillWorksAsSystemMessage(t *testing.T) {
+	data := map[string]any{
+		"type":    "system",
+		"subtype": "init",
+	}
+	msg := ParseMessage(data)
+	_, ok := msg.(*SystemMessage)
+	if !ok {
+		t.Fatalf("expected *SystemMessage for subtype=init, got %T", msg)
+	}
+}
+
+func TestParseMessage_ResultWithPermissionDenials(t *testing.T) {
+	data := map[string]any{
+		"type":          "result",
+		"subtype":       "success",
+		"session_id":    "s-1",
+		"duration_ms":   float64(1000),
+		"is_error":      false,
+		"num_turns":     float64(1),
+		"result":        "ok",
+		"total_cost_usd": float64(0.01),
+		"usage":         map[string]any{},
+		"permission_denials": []any{
+			map[string]any{
+				"tool_name":   "Bash",
+				"tool_use_id": "tu-1",
+				"tool_input":  map[string]any{"command": "rm -rf /"},
+			},
+			map[string]any{
+				"tool_name":   "Write",
+				"tool_use_id": "tu-2",
+				"tool_input":  map[string]any{"path": "/etc/passwd"},
+			},
+		},
+	}
+	msg := ParseMessage(data)
+	rm, ok := msg.(*ResultMessage)
+	if !ok {
+		t.Fatalf("expected *ResultMessage, got %T", msg)
+	}
+	if len(rm.PermissionDenials) != 2 {
+		t.Fatalf("PermissionDenials: got %d, want 2", len(rm.PermissionDenials))
+	}
+	if rm.PermissionDenials[0].ToolName != "Bash" {
+		t.Errorf("PermissionDenials[0].ToolName: got %q", rm.PermissionDenials[0].ToolName)
+	}
+	if rm.PermissionDenials[0].ToolUseID != "tu-1" {
+		t.Errorf("PermissionDenials[0].ToolUseID: got %q", rm.PermissionDenials[0].ToolUseID)
+	}
+	if rm.PermissionDenials[1].ToolName != "Write" {
+		t.Errorf("PermissionDenials[1].ToolName: got %q", rm.PermissionDenials[1].ToolName)
+	}
+}
+
+// ---- T034: ResultMessage PermissionDenials 复杂场景测试 ----
+
+func TestParseMessage_ResultWithEmptyPermissionDenials(t *testing.T) {
+	data := map[string]any{
+		"type":               "result",
+		"subtype":            "success",
+		"session_id":         "s-1",
+		"duration_ms":        float64(100),
+		"is_error":           false,
+		"num_turns":          float64(1),
+		"permission_denials": []any{},
+	}
+	msg := ParseMessage(data)
+	rm, ok := msg.(*ResultMessage)
+	if !ok {
+		t.Fatalf("expected *ResultMessage, got %T", msg)
+	}
+	if rm.PermissionDenials != nil {
+		t.Errorf("expected nil PermissionDenials for empty array, got %v", rm.PermissionDenials)
+	}
+}
+
+func TestParseMessage_ResultWithNoPermissionDenials(t *testing.T) {
+	data := map[string]any{
+		"type":       "result",
+		"subtype":    "success",
+		"session_id": "s-1",
+		"duration_ms": float64(100),
+		"is_error":   false,
+		"num_turns":  float64(1),
+	}
+	msg := ParseMessage(data)
+	rm := msg.(*ResultMessage)
+	if rm.PermissionDenials != nil {
+		t.Errorf("expected nil PermissionDenials when field absent, got %v", rm.PermissionDenials)
+	}
+}

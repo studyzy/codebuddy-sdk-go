@@ -32,6 +32,81 @@ type SessionOptions struct {
 	Model *string
 	// MaxTurns 最大对话轮次。
 	MaxTurns *int
+
+	// ---- 认证相关 ----
+
+	// Environment 是认证环境标识。
+	Environment *string
+	// Endpoint 是自定义端点 URL。
+	Endpoint *string
+
+	// ---- 进程配置 ----
+
+	// Cwd 是工作目录路径。
+	Cwd *string
+	// CLIPath 是 CLI 可执行文件路径。
+	CLIPath *string
+	// Env 是传递给子进程的环境变量。
+	Env map[string]string
+	// ExtraArgs 是额外的 CLI 参数。
+	ExtraArgs map[string]*string
+
+	// ---- 控制请求 ----
+
+	// RequestTimeoutMs 是控制请求超时时间（毫秒）。
+	RequestTimeoutMs *int
+
+	// ---- MCP 服务器 ----
+
+	// MCPServers 是 MCP 服务器配置映射。
+	MCPServers MCPServerMap
+	// StrictMcpConfig 表示是否启用 MCP 配置严格校验模式。
+	StrictMcpConfig bool
+
+	// ---- 权限与 Hook ----
+
+	// CanUseTool 是工具使用权限控制回调。
+	CanUseTool CanUseToolFunc
+	// Hooks 是按事件类型注册的 Hook 回调列表。
+	Hooks map[HookEvent][]HookMatcher
+	// SystemPrompt 是系统提示配置。
+	SystemPrompt *SystemPromptConfig
+
+	// ---- 工具控制 ----
+
+	// AllowedTools 是允许使用的工具列表。
+	AllowedTools []string
+	// DisallowedTools 是禁止使用的工具列表。
+	DisallowedTools []string
+	// Tools 是工具白名单。
+	Tools []string
+
+	// ---- 高级选项 ----
+
+	// IncludePartialMessages 表示是否包含流式部分消息。
+	IncludePartialMessages bool
+	// SettingSources 是配置来源列表。
+	SettingSources []SettingSource
+	// Agents 是子 Agent 定义映射。
+	Agents map[string]AgentDefinition
+
+	// ---- 模型配置 ----
+
+	// Thinking 是模型思考配置。
+	Thinking *ThinkingConfig
+	// Effort 是模型思考深度。
+	Effort *Effort
+	// MaxThinkingTokens 是最大思考 Token 数（已废弃，请使用 Thinking）。
+	MaxThinkingTokens *int
+
+	// ---- 计划模式回调 ----
+
+	// OnPlanModeEnter 是进入计划模式时的回调。
+	// planFilePath 是计划文件路径，previousMode 是进入前的权限模式。
+	OnPlanModeEnter func(planFilePath string, previousMode PermissionMode)
+	// OnPlanModeExit 是退出计划模式时的回调。
+	// planFilePath 是计划文件路径，planContent 是计划文件内容。
+	OnPlanModeExit func(planFilePath string, planContent string)
 }
 
 // Session 代表一次有状态的对话会话。
@@ -109,6 +184,9 @@ func newSession(opts *Options, sessionOpts *SessionOptions, resumeID string) *Se
 		model = *sessionOpts.Model
 	}
 
+	// 将 SessionOptions 字段合并到 Options（sessionOpts 优先级更高）
+	mergeSessionOptsToOpts(opts, sessionOpts)
+
 	s := &Session{
 		id:          id,
 		sessionOpts: sessionOpts,
@@ -116,6 +194,76 @@ func newSession(opts *Options, sessionOpts *SessionOptions, resumeID string) *Se
 	}
 	initConnCore(&s.core, opts, permMode, model)
 	return s
+}
+
+// mergeSessionOptsToOpts 将 SessionOptions 中的非零值字段合并到 Options。
+func mergeSessionOptsToOpts(opts *Options, so *SessionOptions) {
+	if so.MaxTurns != nil {
+		opts.MaxTurns = so.MaxTurns
+	}
+	if so.Environment != nil {
+		opts.Environment = so.Environment
+	}
+	if so.Endpoint != nil {
+		opts.Endpoint = so.Endpoint
+	}
+	if so.Cwd != nil {
+		opts.Cwd = so.Cwd
+	}
+	if so.CLIPath != nil {
+		opts.CLIPath = so.CLIPath
+	}
+	if len(so.Env) > 0 {
+		opts.Env = so.Env
+	}
+	if len(so.ExtraArgs) > 0 {
+		opts.ExtraArgs = so.ExtraArgs
+	}
+	if so.RequestTimeoutMs != nil {
+		opts.RequestTimeoutMs = so.RequestTimeoutMs
+	}
+	if so.MCPServers != nil {
+		opts.MCPServers = so.MCPServers
+	}
+	if so.StrictMcpConfig {
+		opts.StrictMcpConfig = true
+	}
+	if so.CanUseTool != nil {
+		opts.CanUseTool = so.CanUseTool
+	}
+	if so.Hooks != nil {
+		opts.Hooks = so.Hooks
+	}
+	if so.SystemPrompt != nil {
+		opts.SystemPrompt = so.SystemPrompt
+	}
+	if len(so.AllowedTools) > 0 {
+		opts.AllowedTools = so.AllowedTools
+	}
+	if len(so.DisallowedTools) > 0 {
+		opts.DisallowedTools = so.DisallowedTools
+	}
+	if so.Tools != nil {
+		opts.Tools = so.Tools
+	}
+	if so.IncludePartialMessages {
+		opts.IncludePartialMessages = true
+	}
+	if so.SettingSources != nil {
+		opts.SettingSources = so.SettingSources
+	}
+	if len(so.Agents) > 0 {
+		opts.Agents = so.Agents
+	}
+	if so.Thinking != nil {
+		opts.Thinking = so.Thinking
+	}
+	if so.Effort != nil {
+		opts.Effort = so.Effort
+	}
+	if so.MaxThinkingTokens != nil {
+		opts.MaxThinkingTokens = so.MaxThinkingTokens
+	}
 }
 
 // ID 返回会话 ID。ID 在构造时立即确定，始终非空。
@@ -228,6 +376,12 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 // GetModel 返回当前模型名称（本地状态）。
 func (s *Session) GetModel() string {
 	return s.core.getModel()
+}
+
+// SetConfig 动态更新会话配置。
+// 仅在 Connect() 后可调用，通过 set_config 控制请求更新 CLI 设置。
+func (s *Session) SetConfig(ctx context.Context, config map[string]any) (*SetConfigResult, error) {
+	return s.core.setConfig(ctx, s.id, config, "未连接")
 }
 
 // MCPServerStatus 查询 MCP 服务器状态列表。
@@ -402,21 +556,32 @@ func (s *Session) doConnect(ctx context.Context) error {
 	}
 
 	initReqID := fmt.Sprintf("init_%d", time.Now().UnixNano())
+	initPayload := map[string]any{
+		"subtype":            "initialize",
+		"hooks":              hooksConfig,
+		"systemPrompt":       systemPrompt,
+		"appendSystemPrompt": appendSystemPrompt,
+		"agents":             agentsConfig,
+		"sdkMcpServers":      sdkMCPServersVal,
+		"hasPrompt":          s.hasSentMessage.Load(),
+		"capabilities": map[string]any{
+			"askUserQuestion": true,
+		},
+	}
+	// 注入新增的 initialize 字段
+	if s.core.opts.OutputFormat != nil {
+		initPayload["jsonSchema"] = s.core.opts.OutputFormat.Schema
+	}
+	if s.core.opts.Environment != nil {
+		initPayload["environment"] = *s.core.opts.Environment
+	}
+	if s.core.opts.Endpoint != nil {
+		initPayload["endpoint"] = *s.core.opts.Endpoint
+	}
 	initRequest := map[string]any{
 		"type":       "control_request",
 		"request_id": initReqID,
-		"request": map[string]any{
-			"subtype":            "initialize",
-			"hooks":              hooksConfig,
-			"systemPrompt":       systemPrompt,
-			"appendSystemPrompt": appendSystemPrompt,
-			"agents":             agentsConfig,
-			"sdkMcpServers":      sdkMCPServersVal,
-			"hasPrompt":          s.hasSentMessage.Load(),
-			"capabilities": map[string]any{
-				"askUserQuestion": true,
-			},
-		},
+		"request":    initPayload,
 	}
 
 	// 注册 pending channel 先于发送

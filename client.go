@@ -439,6 +439,12 @@ func (c *Client) GetModel() string {
 	return c.core.getModel()
 }
 
+// SetConfig 动态更新配置。
+// 仅在 Connect() 后可调用，通过 set_config 控制请求更新 CLI 设置。
+func (c *Client) SetConfig(ctx context.Context, config map[string]any) (*SetConfigResult, error) {
+	return c.core.setConfig(ctx, c.GetSessionID(), config, "未连接")
+}
+
 // GetSessionID 返回当前会话ID。
 // 会话ID是在与CLI建立连接后从第一条包含session_id的消息中自动捕获的。
 // 如果尚未捕获到会话ID，返回空字符串。

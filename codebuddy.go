@@ -175,21 +175,32 @@ func sendInitialize(ctx context.Context, transport Transport, opts *Options, has
 	}
 
 	requestID := fmt.Sprintf("init_%p", opts)
+	initPayload := map[string]any{
+		"subtype":            "initialize",
+		"hooks":              hooksConfig,
+		"systemPrompt":       systemPrompt,
+		"appendSystemPrompt": appendSystemPrompt,
+		"agents":             agentsConfig,
+		"sdkMcpServers":      sdkMCPServersVal,
+		"hasPrompt":          hasPrompt,
+		"capabilities": map[string]any{
+			"askUserQuestion": true,
+		},
+	}
+	// 注入新增的 initialize 字段
+	if opts.OutputFormat != nil {
+		initPayload["jsonSchema"] = opts.OutputFormat.Schema
+	}
+	if opts.Environment != nil {
+		initPayload["environment"] = *opts.Environment
+	}
+	if opts.Endpoint != nil {
+		initPayload["endpoint"] = *opts.Endpoint
+	}
 	request := map[string]any{
 		"type":       "control_request",
 		"request_id": requestID,
-		"request": map[string]any{
-			"subtype":            "initialize",
-			"hooks":              hooksConfig,
-			"systemPrompt":       systemPrompt,
-			"appendSystemPrompt": appendSystemPrompt,
-			"agents":             agentsConfig,
-			"sdkMcpServers":      sdkMCPServersVal,
-			"hasPrompt":          hasPrompt,
-			"capabilities": map[string]any{
-				"askUserQuestion": true,
-			},
-		},
+		"request":    initPayload,
 	}
 
 	if err := writeControlResponse(ctx, transport, request); err != nil {
@@ -284,6 +295,12 @@ func executeHook(ctx context.Context, callbackID string, hookInput map[string]an
 	}
 	if result.Reason != nil {
 		output["reason"] = *result.Reason
+	}
+	if result.SystemMessage != nil {
+		output["systemMessage"] = *result.SystemMessage
+	}
+	if len(result.HookSpecificOutput) > 0 {
+		output["hookSpecificOutput"] = result.HookSpecificOutput
 	}
 	return output
 }

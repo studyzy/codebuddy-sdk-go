@@ -631,6 +631,51 @@ func (t *SubprocessTransport) buildArgs() []string {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 
+	// 预算限制
+	if opts.MaxBudgetUsd != nil {
+		args = append(args, "--max-budget-usd", fmt.Sprintf("%g", *opts.MaxBudgetUsd))
+	}
+
+	// 会话持久化控制
+	if opts.PersistSession != nil && !*opts.PersistSession {
+		args = append(args, "--no-persist-session")
+	}
+
+	// 文件检查点
+	if opts.EnableFileCheckpointing {
+		args = append(args, "--enable-file-checkpointing")
+	}
+
+	// 沙箱设置
+	if opts.Sandbox != nil && opts.Sandbox.Enabled != nil && !*opts.Sandbox.Enabled {
+		args = append(args, "--sandbox=false")
+	}
+
+	// 认证环境
+	if opts.Environment != nil {
+		args = append(args, "--environment", *opts.Environment)
+	}
+
+	// 自定义端点
+	if opts.Endpoint != nil {
+		args = append(args, "--endpoint", *opts.Endpoint)
+	}
+
+	// 指定恢复位置
+	if opts.ResumeSessionAt != nil {
+		args = append(args, "--resume-session-at", *opts.ResumeSessionAt)
+	}
+
+	// 权限提示工具名
+	if opts.PermissionPromptToolName != nil {
+		args = append(args, "--permission-prompt-tool-name", *opts.PermissionPromptToolName)
+	}
+
+	// MCP 配置严格校验
+	if opts.StrictMcpConfig {
+		args = append(args, "--strict-mcp-config")
+	}
+
 	// 附加工作目录
 	for _, dir := range opts.AdditionalDirectories {
 		args = append(args, "--add-dir", dir)
