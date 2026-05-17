@@ -1,0 +1,37 @@
+# Go 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+htmlcov/
+
+# Go 工作区
+vendor/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# IDE
+.vscode/
+.idea/
+
+# 环境变量
+.env
+.env.*
+
+# 测试产物
+testdata/*.tmp
+.claude
+.specify
+specs
+CLAUDE.md
+reference/
+bin
