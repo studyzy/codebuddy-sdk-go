@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// AuthOptions 认证操作的配置选项
+// AuthOptions 表示认证操作的配置选项。
 type AuthOptions struct {
 	// MethodID 认证方法标识符，默认为 "external"
 	MethodID string

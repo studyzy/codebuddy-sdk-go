@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -34,52 +33,21 @@ import (
 //	client.Send(ctx, "What is 1+1?")
 //	result, _ := client.ReceiveResponse(ctx)
 type Client struct {
-	opts *Options
+	core connCore // 共享连接核心
 
-	// 传输层
-	mu        sync.Mutex
-	transport Transport
-	connected bool
-
-	// 消息通道：background reader → 消费者
-	messageChannel chan Message
-	streamingMode  bool
-
-	// background reader 生命周期管理
-	closeCh chan struct{}
-	wg      sync.WaitGroup
-
-	// 待处理的控制响应：request_id → chan controlResponseResult
-	pendingMu        sync.Mutex
-	pendingResponses map[string]chan controlResponseResult
-
-	// Hook 回调注册表
-	hookRegistry HookCallbackRegistry
-
-	// 可动态替换的权限回调（覆盖 opts.CanUseTool）
-	canUseToolMu         sync.Mutex
-	overriddenCanUseTool CanUseToolFunc
+	// Client 特有字段
+	connected     bool
+	streamingMode bool
 
 	// 会话状态（从第一条 CLI 消息中捕获）
 	sessionID    atomic.Value // string
 	hasSentQuery atomic.Bool
 
-	// 权限模式与模型（本地状态 + 同步标志）
-	stateMu             sync.Mutex
-	currentPermMode     PermissionMode
+	// 权限模式与模型的初始值和待同步标志（Client 特有的 fire-and-forget 逻辑）
 	initialPermMode     PermissionMode
-	currentModel        string
 	initialModel        string
 	permModePendingSync bool
 	modelPendingSync    bool
-
-	// 请求 ID 计数器（原子递增）
-	reqCounter atomic.Int64
-}
-
-type controlResponseResult struct {
-	response map[string]any
-	err      error
 }
 
 // NewClient 创建 Client 实例。opts 为 nil 时使用默认配置。
@@ -102,18 +70,13 @@ func NewClient(opts *Options) *Client {
 		initialModel = *opts.Model
 	}
 
-	return &Client{
-		opts:             opts,
-		messageChannel:   make(chan Message, 100),
-		streamingMode:    true,
-		closeCh:          make(chan struct{}),
-		pendingResponses: make(map[string]chan controlResponseResult),
-		hookRegistry:     make(HookCallbackRegistry),
-		currentPermMode:  initialPerm,
-		initialPermMode:  initialPerm,
-		currentModel:     initialModel,
-		initialModel:     initialModel,
+	c := &Client{
+		streamingMode:   true,
+		initialPermMode: initialPerm,
+		initialModel:    initialModel,
 	}
+	initConnCore(&c.core, opts, initialPerm, initialModel)
+	return c
 }
 
 // NewSession 创建一个新的 Session。
@@ -130,7 +93,7 @@ func NewClient(opts *Options) *Client {
 //	result, _ := session.ReceiveResponse(ctx)
 func (c *Client) NewSession(sessionOpts *SessionOptions) *Session {
 	// 深拷贝 opts 避免 Session 修改影响 Client 共享状态
-	optsCopy := *c.opts
+	optsCopy := *c.core.opts
 	return newSession(&optsCopy, sessionOpts, "")
 }
 
@@ -145,7 +108,7 @@ func (c *Client) NewSession(sessionOpts *SessionOptions) *Session {
 //	defer session.Close()
 //	// 先 Stream() 读取历史消息，再 Send() 继续对话
 func (c *Client) ResumeSession(resumeSessionID string, sessionOpts *SessionOptions) *Session {
-	optsCopy := *c.opts
+	optsCopy := *c.core.opts
 	return newSession(&optsCopy, sessionOpts, resumeSessionID)
 }
 
@@ -162,11 +125,11 @@ func (c *Client) Connect(ctx context.Context, prompt any) error {
 // connectWithTransport 是 Connect 的内部实现，接受可注入的 transport（用于测试）。
 // 若 injectTransport 为 nil，则创建默认的 SubprocessTransport。
 func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTransport Transport) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.core.mu.Lock()
+	defer c.core.mu.Unlock()
 
 	if c.connected {
-		return &CLIConnectionError{Message: "already connected"}
+		return &CLIConnectionError{Message: "已连接"}
 	}
 
 	var transport Transport
@@ -176,25 +139,25 @@ func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTra
 			return err
 		}
 	} else {
-		t := NewSubprocessTransport(c.opts, prompt)
+		t := NewSubprocessTransport(c.core.opts, prompt)
 		if err := t.Connect(ctx); err != nil {
 			return err
 		}
 		transport = t
 	}
-	c.transport = transport
+	c.core.transport = transport
 
 	// 重置通道和关闭信号（支持重复使用）
-	c.messageChannel = make(chan Message, 100)
-	c.closeCh = make(chan struct{})
+	c.core.messageChannel = make(chan Message, 100)
+	c.core.closeCh = make(chan struct{})
 	c.streamingMode = true
 	if _, ok := prompt.(string); ok {
 		c.streamingMode = false
 	}
 
 	// 构建 hooks 配置并获取注册表，然后发送 initialize
-	hooksConfig, registry := BuildHooksConfig(c.opts.Hooks)
-	c.hookRegistry = registry
+	hooksConfig, registry := BuildHooksConfig(c.core.opts.Hooks)
+	c.core.hookRegistry = registry
 
 	sdkMCPServers := transport.SDKMCPServerNames()
 	var sdkMCPServersVal any
@@ -219,22 +182,22 @@ func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTra
 
 	// 注册 initialize 的 pending channel（需在发送前注册，避免竞争）
 	initRespCh := make(chan controlResponseResult, 1)
-	c.pendingMu.Lock()
-	c.pendingResponses[initReqID] = initRespCh
-	c.pendingMu.Unlock()
+	c.core.pendingMu.Lock()
+	c.core.pendingResponses[initReqID] = initRespCh
+	c.core.pendingMu.Unlock()
 
 	b, err := json.Marshal(initRequest)
-		if err != nil {
-			c.pendingMu.Lock()
-			delete(c.pendingResponses, initReqID)
-			c.pendingMu.Unlock()
-			transport.Close() //nolint:errcheck
-			return err
-		}
-		if err := transport.Write(ctx, string(b)); err != nil {
-		c.pendingMu.Lock()
-		delete(c.pendingResponses, initReqID)
-		c.pendingMu.Unlock()
+	if err != nil {
+		c.core.pendingMu.Lock()
+		delete(c.core.pendingResponses, initReqID)
+		c.core.pendingMu.Unlock()
+		transport.Close() //nolint:errcheck
+		return err
+	}
+	if err := transport.Write(ctx, string(b)); err != nil {
+		c.core.pendingMu.Lock()
+		delete(c.core.pendingResponses, initReqID)
+		c.core.pendingMu.Unlock()
 		transport.Close() //nolint:errcheck
 		return err
 	}
@@ -242,7 +205,7 @@ func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTra
 	c.connected = true
 
 	// 启动后台读取 goroutine
-	c.wg.Add(1)
+	c.core.wg.Add(1)
 	go c.backgroundReader(ctx)
 
 	// 等待 initialize 响应（带超时）
@@ -264,12 +227,12 @@ func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTra
 	// 从 initialize 响应更新 model
 	if initResp != nil {
 		if modelID, ok := initResp["currentModelId"].(string); ok && modelID != "" {
-			c.stateMu.Lock()
-			if c.currentModel == "" {
-				c.currentModel = modelID
+			c.core.stateMu.Lock()
+			if c.core.currentModel == "" {
+				c.core.currentModel = modelID
 				c.initialModel = modelID
 			}
-			c.stateMu.Unlock()
+			c.core.stateMu.Unlock()
 		}
 	}
 
@@ -288,29 +251,29 @@ func (c *Client) connectWithTransport(ctx context.Context, prompt any, injectTra
 // 将控制响应路由到 pendingResponses，控制请求派发到独立 goroutine，
 // 普通消息解析后发送到 messageChannel。
 func (c *Client) backgroundReader(ctx context.Context) {
-	defer c.wg.Done()
-	defer close(c.messageChannel)
+	defer c.core.wg.Done()
+	defer close(c.core.messageChannel)
 
 	for {
 		select {
-		case <-c.closeCh:
+		case <-c.core.closeCh:
 			// 唤醒所有待处理的控制请求，避免泄漏
-			c.drainPendingResponses()
+			c.core.drainPendingResponses()
 			return
-		case raw, ok := <-c.transport.ReadMessages():
+		case raw, ok := <-c.core.transport.ReadMessages():
 			if !ok {
 				// transport 已关闭
-				c.drainPendingResponses()
+				c.core.drainPendingResponses()
 				return
 			}
 
 			if raw.Err != nil {
 				// 尝试把错误传给消费者
 				select {
-				case c.messageChannel <- &ErrorMessage{Error: raw.Err.Error()}:
+				case c.core.messageChannel <- &ErrorMessage{Error: raw.Err.Error()}:
 				default:
 				}
-				c.drainPendingResponses()
+				c.core.drainPendingResponses()
 				return
 			}
 
@@ -320,11 +283,11 @@ func (c *Client) backgroundReader(ctx context.Context) {
 			switch msgType {
 			case "control_response":
 				// 路由到等待中的 sendControlRequest 调用
-				c.routeControlResponse(data)
+				c.core.routeControlResponse(data)
 
 			case "control_request":
 				// 派发到独立 goroutine，不阻塞 backgroundReader
-				go c.handleControlRequest(ctx, data)
+				go c.core.handleControlRequest(ctx, data)
 
 			default:
 				// 从第一条有 session_id 的消息捕获 sessionID
@@ -332,14 +295,14 @@ func (c *Client) backgroundReader(ctx context.Context) {
 					if sid, ok := data["session_id"].(string); ok && sid != "" {
 						c.sessionID.Store(sid)
 						// 同步待处理的权限模式/模型变更
-						c.stateMu.Lock()
+						c.core.stateMu.Lock()
 						needPerm := c.permModePendingSync
 						needModel := c.modelPendingSync
 						c.permModePendingSync = false
 						c.modelPendingSync = false
-						perm := c.currentPermMode
-						model := c.currentModel
-						c.stateMu.Unlock()
+						perm := c.core.currentPermMode
+						model := c.core.currentModel
+						c.core.stateMu.Unlock()
 
 						if needPerm {
 							go c.fireAndForgetPermMode(ctx, string(perm), sid)
@@ -356,9 +319,9 @@ func (c *Client) backgroundReader(ctx context.Context) {
 				}
 				AttachRawJSON(msg, raw.Raw)
 				select {
-				case c.messageChannel <- msg:
-				case <-c.closeCh:
-					c.drainPendingResponses()
+				case c.core.messageChannel <- msg:
+				case <-c.core.closeCh:
+					c.core.drainPendingResponses()
 					return
 				}
 			}
@@ -366,180 +329,19 @@ func (c *Client) backgroundReader(ctx context.Context) {
 	}
 }
 
-// routeControlResponse 解析控制响应，通知对应的 sendControlRequest 等待者。
-func (c *Client) routeControlResponse(data map[string]any) {
-	resp, _ := data["response"].(map[string]any)
-	if resp == nil {
-		return
-	}
-	requestID, _ := resp["request_id"].(string)
-	if requestID == "" {
-		return
-	}
-
-	c.pendingMu.Lock()
-	ch, ok := c.pendingResponses[requestID]
-	if ok {
-		delete(c.pendingResponses, requestID)
-	}
-	c.pendingMu.Unlock()
-
-	if !ok {
-		return
-	}
-
-	// 判断是 success 还是 error
-	subtype, _ := resp["subtype"].(string)
-	result := controlResponseResult{}
-	if subtype == "error" {
-		errMsg, _ := resp["error"].(string)
-		result.err = &ControlRequestError{Message: errMsg}
-	} else {
-		inner, _ := resp["response"].(map[string]any)
-		if inner == nil {
-			inner = make(map[string]any)
-		}
-		result.response = inner
-	}
-	select {
-	case ch <- result:
-	default:
-	}
-}
-
-// drainPendingResponses 关闭所有待处理的控制请求通道，避免 goroutine 泄漏。
-func (c *Client) drainPendingResponses() {
-	c.pendingMu.Lock()
-	defer c.pendingMu.Unlock()
-	for id, ch := range c.pendingResponses {
-		close(ch)
-		delete(c.pendingResponses, id)
-	}
-}
-
-// sendControlRequest 发送控制请求并等待响应。
-// 生成唯一 request_id，注册 pending channel，序列化发送，然后阻塞等待响应或 ctx 超时。
-func (c *Client) sendControlRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
-	c.mu.Lock()
-	transport := c.transport
-	connected := c.connected
-	c.mu.Unlock()
-
-	if !connected || transport == nil {
-		return nil, &CLIConnectionError{Message: "not connected"}
-	}
-
-	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano()+c.reqCounter.Add(1))
-
-	// 注册 pending channel 先于发送，避免竞争
-	respCh := make(chan controlResponseResult, 1)
-	c.pendingMu.Lock()
-	c.pendingResponses[requestID] = respCh
-	c.pendingMu.Unlock()
-
-	request := map[string]any{
-		"type":       "control_request",
-		"request_id": requestID,
-		"request":    payload,
-	}
-	b, err := json.Marshal(request)
-	if err != nil {
-		c.pendingMu.Lock()
-		delete(c.pendingResponses, requestID)
-		c.pendingMu.Unlock()
-		return nil, fmt.Errorf("marshal control request: %w", err)
-	}
-	if err := transport.Write(ctx, string(b)); err != nil {
-		c.pendingMu.Lock()
-		delete(c.pendingResponses, requestID)
-		c.pendingMu.Unlock()
-		return nil, err
-	}
-
-	select {
-	case resp, ok := <-respCh:
-		if !ok {
-			return nil, &CLIConnectionError{Message: fmt.Sprintf("control request '%v' failed: connection closed", payload["subtype"])}
-		}
-		if resp.err != nil {
-			if controlErr, ok := resp.err.(*ControlRequestError); ok {
-				controlErr.Subtype = fmt.Sprint(payload["subtype"])
-			}
-			return nil, resp.err
-		}
-		return resp.response, nil
-	case <-ctx.Done():
-		// 超时：从 pending 中清除，避免泄漏
-		c.pendingMu.Lock()
-		delete(c.pendingResponses, requestID)
-		c.pendingMu.Unlock()
-		return nil, ctx.Err()
-	}
-}
-
-// handleControlRequest 处理来自 CLI 的控制请求（在独立 goroutine 中执行）。
-func (c *Client) handleControlRequest(ctx context.Context, data map[string]any) {
-	c.mu.Lock()
-	transport := c.transport
-	c.mu.Unlock()
-	if transport == nil {
-		return
-	}
-
-	requestID, _ := data["request_id"].(string)
-	request, _ := data["request"].(map[string]any)
-	if request == nil {
-		return
-	}
-	subtype, _ := request["subtype"].(string)
-
-	defer func() {
-		// 确保不会因 panic 让 goroutine 静默崩溃
-		if r := recover(); r != nil {
-			_ = writeControlResponse(ctx, transport, BuildControlErrorResponse(requestID, fmt.Sprintf("panic: %v", r)))
-		}
-	}()
-
-	switch subtype {
-	case "hook_callback":
-		callbackID, _ := request["callback_id"].(string)
-		hookInput, _ := request["input"].(map[string]any)
-		toolUseID := getStringPtrFromMap(request, "tool_use_id")
-
-		output := executeHook(ctx, callbackID, hookInput, toolUseID, c.hookRegistry)
-		_ = writeControlResponse(ctx, transport, BuildControlResponse(requestID, output))
-
-	case "can_use_tool":
-		// 优先使用动态设置的 overriddenCanUseTool，否则回退到 opts.CanUseTool
-		c.canUseToolMu.Lock()
-		override := c.overriddenCanUseTool
-		c.canUseToolMu.Unlock()
-		if override != nil {
-			optsCopy := *c.opts
-			optsCopy.CanUseTool = override
-			handlePermissionRequest(ctx, transport, requestID, request, &optsCopy)
-		} else {
-			handlePermissionRequest(ctx, transport, requestID, request, c.opts)
-		}
-
-	case "mcp_message":
-		transport.HandleMCPMessageRequest(ctx, requestID, request)
-	}
-}
-
 // Send 向 CLI 发送新的用户消息（流式模式）。
 // 适用于 Connect(ctx, nil) 之后的多轮对话。
 func (c *Client) Send(ctx context.Context, prompt any) error {
-	c.mu.Lock()
-	transport := c.transport
+	c.core.mu.Lock()
+	transport := c.core.transport
 	connected := c.connected
-	c.mu.Unlock()
+	c.core.mu.Unlock()
 
 	if !connected || transport == nil {
-		return &CLIConnectionError{Message: "not connected, call Connect first"}
+		return &CLIConnectionError{Message: "未连接，请先调用 Connect"}
 	}
 	if !c.streamingMode {
-		return &CLIConnectionError{Message: "cannot call Send in non-streaming mode; Connect was called with a string prompt"}
+		return &CLIConnectionError{Message: "非流式模式下不能调用 Send；Connect 已使用字符串 prompt 参数"}
 	}
 
 	c.hasSentQuery.Store(true)
@@ -549,78 +351,49 @@ func (c *Client) Send(ctx context.Context, prompt any) error {
 // ReceiveMessages 返回消息通道，调用方可 range 迭代所有消息。
 // 通道在连接关闭或读取完毕后自动关闭。
 func (c *Client) ReceiveMessages() <-chan Message {
-	return c.messageChannel
+	return c.core.messageChannel
 }
 
 // ReceiveResponse 从消息通道中读取，直到收到 ResultMessage 或 ErrorMessage 为止。
 // 若 ResultMessage.IsError 为 true，则返回 ExecutionError。
 func (c *Client) ReceiveResponse(ctx context.Context) (*ResultMessage, error) {
-	for {
-		select {
-		case msg, ok := <-c.messageChannel:
-			if !ok {
-				return nil, &CLIConnectionError{Message: "connection closed"}
-			}
-			switch m := msg.(type) {
-			case *ResultMessage:
-				if m.IsError && len(m.Errors) > 0 {
-					return nil, NewExecutionError(m.Errors, m.Subtype)
-				}
-				return m, nil
-			case *ErrorMessage:
-				return nil, &CLIConnectionError{Message: m.Error}
-			}
-			// 其他消息类型（AssistantMessage、SystemMessage 等）继续循环
-
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
+	return c.core.receiveResponse(ctx, "连接已关闭")
 }
 
 // Interrupt 发送中断信号，触发 CLI 停止当前执行。
 // 这是 fire-and-forget 操作（不等待响应）。
 func (c *Client) Interrupt(ctx context.Context) error {
-	c.mu.Lock()
-	transport := c.transport
+	c.core.mu.Lock()
 	connected := c.connected
-	c.mu.Unlock()
-
-	if !connected || transport == nil {
-		return &CLIConnectionError{Message: "not connected"}
+	c.core.mu.Unlock()
+	if !connected {
+		return &CLIConnectionError{Message: "未连接"}
 	}
-
-	request := map[string]any{
-		"type":       "control_request",
-		"request_id": fmt.Sprintf("interrupt_%d", time.Now().UnixNano()),
-		"request":    map[string]any{"subtype": "interrupt"},
-	}
-	b, _ := json.Marshal(request)
-	return transport.Write(ctx, string(b))
+	return c.core.interrupt(ctx, "未连接", nil)
 }
 
 // SetPermissionMode 更新权限模式。
 //   - 若尚未发送任何查询，仅更新本地状态，待第一条 CLI 消息到来后同步
 //   - 若已发送查询且有 session_id，立即 fire-and-forget 同步到 CLI
 func (c *Client) SetPermissionMode(ctx context.Context, mode PermissionMode) error {
-	c.stateMu.Lock()
-	c.currentPermMode = mode
-	c.stateMu.Unlock()
+	c.core.stateMu.Lock()
+	c.core.currentPermMode = mode
+	c.core.stateMu.Unlock()
 
 	sidRaw := c.sessionID.Load()
 	if !c.hasSentQuery.Load() || sidRaw == nil {
 		// 标记待同步
-		c.stateMu.Lock()
+		c.core.stateMu.Lock()
 		c.permModePendingSync = true
-		c.stateMu.Unlock()
+		c.core.stateMu.Unlock()
 		return nil
 	}
 
 	sid, _ := sidRaw.(string)
 	if sid == "" {
-		c.stateMu.Lock()
+		c.core.stateMu.Lock()
 		c.permModePendingSync = true
-		c.stateMu.Unlock()
+		c.core.stateMu.Unlock()
 		return nil
 	}
 
@@ -630,32 +403,30 @@ func (c *Client) SetPermissionMode(ctx context.Context, mode PermissionMode) err
 
 // GetPermissionMode 返回当前权限模式（本地状态）。
 func (c *Client) GetPermissionMode() PermissionMode {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return c.currentPermMode
+	return c.core.getPermissionMode()
 }
 
 // SetModel 更新 AI 模型。
 //   - 若尚未发送任何查询，仅更新本地状态，待第一条 CLI 消息到来后同步
 //   - 若已发送查询且有 session_id，立即 fire-and-forget 同步到 CLI
 func (c *Client) SetModel(ctx context.Context, model string) error {
-	c.stateMu.Lock()
-	c.currentModel = model
-	c.stateMu.Unlock()
+	c.core.stateMu.Lock()
+	c.core.currentModel = model
+	c.core.stateMu.Unlock()
 
 	sidRaw := c.sessionID.Load()
 	if !c.hasSentQuery.Load() || sidRaw == nil {
-		c.stateMu.Lock()
+		c.core.stateMu.Lock()
 		c.modelPendingSync = true
-		c.stateMu.Unlock()
+		c.core.stateMu.Unlock()
 		return nil
 	}
 
 	sid, _ := sidRaw.(string)
 	if sid == "" {
-		c.stateMu.Lock()
+		c.core.stateMu.Lock()
 		c.modelPendingSync = true
-		c.stateMu.Unlock()
+		c.core.stateMu.Unlock()
 		return nil
 	}
 
@@ -665,9 +436,7 @@ func (c *Client) SetModel(ctx context.Context, model string) error {
 
 // GetModel 返回当前模型名称（本地状态）。
 func (c *Client) GetModel() string {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return c.currentModel
+	return c.core.getModel()
 }
 
 // GetSessionID 返回当前会话ID。
@@ -683,220 +452,91 @@ func (c *Client) GetSessionID() string {
 
 // MCPServerStatus 查询 MCP 服务器状态列表。
 func (c *Client) MCPServerStatus(ctx context.Context) ([]MCPServerStatus, error) {
-	resp, err := c.sendControlRequest(ctx, map[string]any{"subtype": "mcp_status"})
-	if err != nil {
-		return nil, err
-	}
-
-	servers, _ := resp["mcp_servers"].([]any)
-	result := make([]MCPServerStatus, 0, len(servers))
-	for _, s := range servers {
-		m, ok := s.(map[string]any)
-		if !ok {
-			continue
-		}
-		var serverInfo map[string]any
-		if si, ok := m["serverInfo"].(map[string]any); ok {
-			serverInfo = si
-		}
-		result = append(result, MCPServerStatus{
-			Name:       getString(m, "name"),
-			Status:     getString(m, "status"),
-			ServerInfo: serverInfo,
-		})
-	}
-	return result, nil
+	return c.core.mcpServerStatus(ctx, "未连接")
 }
 
 // SetHooks 替换 Hook 回调注册表，不向 CLI 发送任何控制请求。
 func (c *Client) SetHooks(hooks map[HookEvent][]HookMatcher) {
-	_, registry := BuildHooksConfig(hooks)
-	c.hookRegistry = registry
+	c.core.setHooks(hooks)
 }
 
 // SetCanUseTool 动态替换工具权限回调。
 func (c *Client) SetCanUseTool(handler CanUseToolFunc) {
-	c.canUseToolMu.Lock()
-	c.overriddenCanUseTool = handler
-	c.canUseToolMu.Unlock()
+	c.core.setCanUseTool(handler)
 }
 
 // GetCanUseTool 返回当前生效的权限回调。
 func (c *Client) GetCanUseTool() CanUseToolFunc {
-	c.canUseToolMu.Lock()
-	override := c.overriddenCanUseTool
-	c.canUseToolMu.Unlock()
-	if override != nil {
-		return override
-	}
-	return c.opts.CanUseTool
+	return c.core.getCanUseTool()
 }
 
 // GetAvailableModes 从 CLI 获取可用权限模式列表。
 func (c *Client) GetAvailableModes(ctx context.Context) ([]AvailableMode, error) {
 	sid := c.GetSessionID()
-	resp, err := c.sendControlRequest(ctx, map[string]any{
-		"subtype":    "get_available_modes",
-		"session_id": sid,
-	})
-	if err != nil {
-		return nil, err
-	}
-	raw, _ := resp["availableModes"].([]any)
-	result := make([]AvailableMode, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		result = append(result, AvailableMode{
-			ID:          getString(m, "id"),
-			Description: getString(m, "description"),
-		})
-	}
-	return result, nil
+	return c.core.getAvailableModes(ctx, sid, "未连接")
 }
 
 // GetAvailableModels 从 CLI 获取可用模型列表（简化格式）。
 func (c *Client) GetAvailableModels(ctx context.Context) ([]AvailableModel, error) {
-	resp, err := c.sendControlRequest(ctx, map[string]any{"subtype": "get_available_models"})
-	if err != nil {
-		return nil, err
-	}
-	raw, _ := resp["availableModels"].([]any)
-	result := make([]AvailableModel, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		result = append(result, AvailableModel{
-			ModelID: getString(m, "modelId"),
-			Name:    getString(m, "displayName"),
-		})
-	}
-	return result, nil
+	return c.core.getAvailableModels(ctx, "未连接")
 }
 
 // GetAvailableModelsRaw 从 CLI 获取完整模型配置。
 func (c *Client) GetAvailableModelsRaw(ctx context.Context) ([]map[string]any, error) {
-	resp, err := c.sendControlRequest(ctx, map[string]any{"subtype": "get_available_models"})
-	if err != nil {
-		return nil, err
-	}
-	raw, _ := resp["rawModels"].([]any)
-	result := make([]map[string]any, 0, len(raw))
-	for _, item := range raw {
-		if m, ok := item.(map[string]any); ok {
-			result = append(result, m)
-		}
-	}
-	return result, nil
+	return c.core.getAvailableModelsRaw(ctx, "未连接")
 }
 
 // GetAvailableCommands 订阅 commands 通道并返回当前可用命令列表（一次性获取）。
 func (c *Client) GetAvailableCommands(ctx context.Context) ([]AvailableCommand, error) {
-	c.mu.Lock()
-	transport := c.transport
+	c.core.mu.Lock()
 	connected := c.connected
-	c.mu.Unlock()
-	if !connected || transport == nil {
-		return nil, &CLIConnectionError{Message: "not connected"}
+	c.core.mu.Unlock()
+	if !connected {
+		return nil, &CLIConnectionError{Message: "未连接"}
 	}
-
-	resultCh := make(chan []AvailableCommand, 1)
-
-	var handler NotificationHandler
-	handler = func(notification ControlNotificationMessage) {
-		transport.OffNotification(SubscriptionChannelCommands, handler)
-		data := notification.Data
-		rawCmds, _ := data["commands"].([]any)
-		cmds := parseAvailableCommands(rawCmds)
-		select {
-		case resultCh <- cmds:
-		default:
-		}
-	}
-	transport.OnNotification(SubscriptionChannelCommands, handler)
-
 	sid := c.GetSessionID()
-	_, err := c.sendControlRequest(ctx, map[string]any{
-		"subtype": "subscribe",
-		"channel": string(SubscriptionChannelCommands),
-		"session_id": sid,
-	})
-	if err != nil {
-		transport.OffNotification(SubscriptionChannelCommands, handler)
-		return nil, err
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	select {
-	case cmds := <-resultCh:
-		return cmds, nil
-	case <-timeoutCtx.Done():
-		transport.OffNotification(SubscriptionChannelCommands, handler)
-		return nil, fmt.Errorf("timeout waiting for commands notification")
-	}
+	return c.core.getAvailableCommands(ctx, sid, "未连接", nil)
 }
 
 // SubscribeToCommands 持久订阅 commands 通道。
 func (c *Client) SubscribeToCommands(ctx context.Context, handler NotificationHandler) error {
-	c.mu.Lock()
-	transport := c.transport
+	c.core.mu.Lock()
 	connected := c.connected
-	c.mu.Unlock()
-	if !connected || transport == nil {
-		return &CLIConnectionError{Message: "not connected"}
+	c.core.mu.Unlock()
+	if !connected {
+		return &CLIConnectionError{Message: "未连接"}
 	}
-
-	transport.OnNotification(SubscriptionChannelCommands, handler)
 	sid := c.GetSessionID()
-	_, err := c.sendControlRequest(ctx, map[string]any{
-		"subtype":    "subscribe",
-		"channel":    string(SubscriptionChannelCommands),
-		"session_id": sid,
-	})
-	if err != nil {
-		transport.OffNotification(SubscriptionChannelCommands, handler)
-		return err
-	}
-	return nil
+	return c.core.subscribeToCommands(ctx, handler, sid, "未连接", nil)
 }
 
 // UnsubscribeFromCommands 取消注册 commands 通道的指定 handler。
 func (c *Client) UnsubscribeFromCommands(handler NotificationHandler) {
-	c.mu.Lock()
-	transport := c.transport
-	c.mu.Unlock()
-	if transport != nil {
-		transport.OffNotification(SubscriptionChannelCommands, handler)
-	}
+	c.core.unsubscribeFromCommands(handler)
 }
 
 // Disconnect 断开连接，停止后台 goroutine 并释放资源。
 func (c *Client) Disconnect(ctx context.Context) error {
-	c.mu.Lock()
+	c.core.mu.Lock()
 	if !c.connected {
-		c.mu.Unlock()
+		c.core.mu.Unlock()
 		return nil
 	}
 	c.connected = false
-	transport := c.transport
-	c.transport = nil
+	transport := c.core.transport
+	c.core.transport = nil
 
 	// 发送关闭信号
 	select {
-	case <-c.closeCh:
+	case <-c.core.closeCh:
 		// 已关闭
 	default:
-		close(c.closeCh)
+		close(c.core.closeCh)
 	}
-	c.mu.Unlock()
+	c.core.mu.Unlock()
 
 	// 等待 backgroundReader 退出
-	c.wg.Wait()
+	c.core.wg.Wait()
 
 	if transport != nil {
 		return transport.Close()
@@ -913,9 +553,9 @@ func (c *Client) Close() error {
 
 // fireAndForgetPermMode 以 fire-and-forget 方式向 CLI 同步权限模式。
 func (c *Client) fireAndForgetPermMode(ctx context.Context, mode string, sessionID string) {
-	c.mu.Lock()
-	transport := c.transport
-	c.mu.Unlock()
+	c.core.mu.Lock()
+	transport := c.core.transport
+	c.core.mu.Unlock()
 	if transport == nil {
 		return
 	}
@@ -934,9 +574,9 @@ func (c *Client) fireAndForgetPermMode(ctx context.Context, mode string, session
 
 // fireAndForgetModel 以 fire-and-forget 方式向 CLI 同步模型设置。
 func (c *Client) fireAndForgetModel(ctx context.Context, model string, sessionID string) {
-	c.mu.Lock()
-	transport := c.transport
-	c.mu.Unlock()
+	c.core.mu.Lock()
+	transport := c.core.transport
+	c.core.mu.Unlock()
 	if transport == nil {
 		return
 	}

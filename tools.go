@@ -7,17 +7,17 @@ package codebuddy
 // =============================================================================
 
 const (
-	// ToolAskUserQuestion 向用户提问的工具名称
+	// ToolAskUserQuestion 是向用户提问的工具名称。
 	ToolAskUserQuestion = "AskUserQuestion"
-	// ToolRead 读取文件工具名称
+	// ToolRead 是读取文件的工具名称。
 	ToolRead = "Read"
-	// ToolWrite 写入文件工具名称
+	// ToolWrite 是写入文件的工具名称。
 	ToolWrite = "Write"
-	// ToolEdit 编辑文件工具名称
+	// ToolEdit 是编辑文件的工具名称。
 	ToolEdit = "Edit"
-	// ToolMultiEdit 多处编辑文件工具名称
+	// ToolMultiEdit 是多处编辑文件的工具名称。
 	ToolMultiEdit = "MultiEdit"
-	// ToolNotebookEdit 编辑 Notebook 工具名称
+	// ToolNotebookEdit 是编辑 Notebook 的工具名称。
 	ToolNotebookEdit = "NotebookEdit"
 )
 

@@ -30,8 +30,10 @@ Thumbs.db
 # 测试产物
 testdata/*.tmp
 .claude
+.codebuddy
 .specify
 specs
 CLAUDE.md
 reference/
 bin
+settings.local.json

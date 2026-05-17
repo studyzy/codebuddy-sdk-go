@@ -26,7 +26,7 @@ type PluginResult struct {
 	Message string
 }
 
-// InstallMarketplaceOptions 安装市场的选项。
+// InstallMarketplaceOptions 表示安装市场的选项。
 type InstallMarketplaceOptions struct {
 	// Name 市场名称
 	Name string
@@ -36,7 +36,7 @@ type InstallMarketplaceOptions struct {
 	AutoUpdate bool
 }
 
-// RemoveMarketplaceOptions 移除市场的选项。
+// RemoveMarketplaceOptions 表示移除市场的选项。
 type RemoveMarketplaceOptions struct {
 	// Name 市场名称
 	Name string
@@ -44,7 +44,7 @@ type RemoveMarketplaceOptions struct {
 	RemovePlugins bool
 }
 
-// InstallPluginOptions 安装插件的选项。
+// InstallPluginOptions 表示安装插件的选项。
 type InstallPluginOptions struct {
 	// Name 插件名称
 	Name string

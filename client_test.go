@@ -39,11 +39,11 @@ func TestNewClient_WithOptions(t *testing.T) {
 func TestRouteControlResponse_Success(t *testing.T) {
 	client := NewClient(nil)
 	respCh := make(chan controlResponseResult, 1)
-	client.pendingMu.Lock()
-	client.pendingResponses["req-1"] = respCh
-	client.pendingMu.Unlock()
+	client.core.pendingMu.Lock()
+	client.core.pendingResponses["req-1"] = respCh
+	client.core.pendingMu.Unlock()
 
-	client.routeControlResponse(map[string]any{
+	client.core.routeControlResponse(map[string]any{
 		"response": map[string]any{
 			"request_id": "req-1",
 			"subtype":    "success",
@@ -63,11 +63,11 @@ func TestRouteControlResponse_Success(t *testing.T) {
 func TestRouteControlResponse_Error(t *testing.T) {
 	client := NewClient(nil)
 	respCh := make(chan controlResponseResult, 1)
-	client.pendingMu.Lock()
-	client.pendingResponses["req-2"] = respCh
-	client.pendingMu.Unlock()
+	client.core.pendingMu.Lock()
+	client.core.pendingResponses["req-2"] = respCh
+	client.core.pendingMu.Unlock()
 
-	client.routeControlResponse(map[string]any{
+	client.core.routeControlResponse(map[string]any{
 		"response": map[string]any{
 			"request_id": "req-2",
 			"subtype":    "error",
@@ -85,21 +85,21 @@ func TestDrainPendingResponses(t *testing.T) {
 	client := NewClient(nil)
 	ch1 := make(chan controlResponseResult, 1)
 	ch2 := make(chan controlResponseResult, 1)
-	client.pendingMu.Lock()
-	client.pendingResponses["r1"] = ch1
-	client.pendingResponses["r2"] = ch2
-	client.pendingMu.Unlock()
+	client.core.pendingMu.Lock()
+	client.core.pendingResponses["r1"] = ch1
+	client.core.pendingResponses["r2"] = ch2
+	client.core.pendingMu.Unlock()
 
-	client.drainPendingResponses()
+	client.core.drainPendingResponses()
 
 	_, ok1 := <-ch1
 	_, ok2 := <-ch2
 	if ok1 || ok2 {
 		t.Error("expected all channels to be closed after drain")
 	}
-	client.pendingMu.Lock()
-	n := len(client.pendingResponses)
-	client.pendingMu.Unlock()
+	client.core.pendingMu.Lock()
+	n := len(client.core.pendingResponses)
+	client.core.pendingMu.Unlock()
 	if n != 0 {
 		t.Errorf("expected empty pendingResponses after drain, got %d", n)
 	}
@@ -356,7 +356,7 @@ func TestClient_SendControlRequest(t *testing.T) {
 	respCh := make(chan map[string]any, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		resp, err := client.sendControlRequest(ctx, map[string]any{"subtype": "mcp_status"})
+		resp, err := client.core.sendControlRequest(ctx, map[string]any{"subtype": "mcp_status"}, "未连接")
 		if err != nil {
 			errCh <- err
 			return
@@ -471,7 +471,7 @@ func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
 	}()
 
 	cbID := "hook_PreToolUse_0_0"
-	client.hookRegistry[cbID] = func(ctx context.Context, input map[string]any, toolUseID *string) (HookJSONOutput, error) {
+	client.core.hookRegistry[cbID] = func(ctx context.Context, input map[string]any, toolUseID *string) (HookJSONOutput, error) {
 		hookCalled = true
 		c := true
 		return HookJSONOutput{Continue: &c}, nil
@@ -694,7 +694,7 @@ func TestClient_SendControlRequest_ContextCancel(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.sendControlRequest(ctx, map[string]any{"subtype": "test_cancel"})
+		_, err := client.core.sendControlRequest(ctx, map[string]any{"subtype": "test_cancel"}, "未连接")
 		errCh <- err
 	}()
 
@@ -735,14 +735,14 @@ func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
 		client.Close()
 	}()
 
-	client.mu.Lock()
-	client.opts = &Options{
+	client.core.mu.Lock()
+	client.core.opts = &Options{
 		CanUseTool: func(ctx context.Context, toolName string, input map[string]any, o CanUseToolOptions) (PermissionResult, error) {
 			permCalled = true
 			return &PermissionResultAllow{}, nil
 		},
 	}
-	client.mu.Unlock()
+	client.core.mu.Unlock()
 
 	tr.injectRaw(map[string]any{
 		"type":       "control_request",
@@ -827,7 +827,7 @@ func TestClient_SendControlRequest_ChannelClosed(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.sendControlRequest(context.Background(), map[string]any{"subtype": "test_close"})
+		_, err := client.core.sendControlRequest(context.Background(), map[string]any{"subtype": "test_close"}, "未连接")
 		errCh <- err
 	}()
 

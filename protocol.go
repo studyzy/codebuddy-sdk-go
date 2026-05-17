@@ -46,7 +46,7 @@ func writeControlResponse(ctx context.Context, t Transport, payload map[string]a
 	return t.Write(ctx, string(b))
 }
 
-// HookCallbackRegistry Hooks 回调注册表：callback ID → HookCallback 函数
+// HookCallbackRegistry 表示 Hooks 回调注册表，键为 callback ID，值为 HookCallback 函数。
 type HookCallbackRegistry map[string]HookCallback
 
 // BuildHooksConfig 将 Options.Hooks 转换为 CLI 期望的配置格式，同时构建回调注册表。

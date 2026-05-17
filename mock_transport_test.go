@@ -38,7 +38,7 @@ func (m *mockTransport) closeMessages() {
 }
 
 func (m *mockTransport) Connect(_ context.Context) error { return nil }
-func (m *mockTransport) ReadMessages() <-chan RawMessage  { return m.msgCh }
+func (m *mockTransport) ReadMessages() <-chan RawMessage { return m.msgCh }
 func (m *mockTransport) Write(_ context.Context, data string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -56,11 +56,11 @@ func (m *mockTransport) IsClosed() bool {
 	defer m.mu.Unlock()
 	return m.closed
 }
-func (m *mockTransport) SDKMCPServerNames() []string { return m.sdkNames }
+func (m *mockTransport) SDKMCPServerNames() []string                                           { return m.sdkNames }
 func (m *mockTransport) HandleMCPMessageRequest(_ context.Context, _ string, _ map[string]any) {}
-func (m *mockTransport) IsReady() bool                               { return true }
-func (m *mockTransport) OnNotification(_ SubscriptionChannel, _ NotificationHandler)  {}
-func (m *mockTransport) OffNotification(_ SubscriptionChannel, _ NotificationHandler) {}
+func (m *mockTransport) IsReady() bool                                                         { return true }
+func (m *mockTransport) OnNotification(_ SubscriptionChannel, _ NotificationHandler)           {}
+func (m *mockTransport) OffNotification(_ SubscriptionChannel, _ NotificationHandler)          {}
 func (m *mockTransport) SendControlRequestNoWait(_ context.Context, _ map[string]any) error {
 	return nil
 }

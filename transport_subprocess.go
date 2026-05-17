@@ -12,11 +12,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // SubprocessTransport 通过子进程启动 CLI 并通过 stdin/stdout 通信的传输实现。
@@ -199,21 +199,21 @@ func (t *SubprocessTransport) readStdout(pipe io.Reader) {
 		if jsonBuf.Len() == 0 {
 			var data map[string]any
 			if err := json.Unmarshal([]byte(line), &data); err == nil {
-			gotOutput = true
-			t.isCliReady.Store(true)
-			// control_notification 直接分发给注册处理器，不入 msgCh
-			if msgType, _ := data["type"].(string); msgType == "control_notification" {
-				t.dispatchNotification(data)
+				gotOutput = true
+				t.isCliReady.Store(true)
+				// control_notification 直接分发给注册处理器，不入 msgCh
+				if msgType, _ := data["type"].(string); msgType == "control_notification" {
+					t.dispatchNotification(data)
+					continue
+				}
+				select {
+				case t.msgCh <- RawMessage{Data: data, Raw: json.RawMessage([]byte(line))}:
+				case <-t.closeCh:
+					return
+				}
 				continue
 			}
-			select {
-			case t.msgCh <- RawMessage{Data: data, Raw: json.RawMessage([]byte(line))}:
-			case <-t.closeCh:
-				return
-			}
-			continue
 		}
-	}
 
 		// 累积到缓冲区，尝试解析完整 JSON
 		jsonBuf.WriteString(line)
@@ -395,14 +395,14 @@ func (t *SubprocessTransport) OnNotification(channel SubscriptionChannel, handle
 }
 
 // OffNotification 实现 Transport 接口：移除指定 channel 的通知处理器。
-// 使用 reflect.ValueOf(handler).Pointer() 比较函数地址。
+// 通过 unsafe.Pointer 提取函数指针值进行比较，避免依赖 reflect 包。
 func (t *SubprocessTransport) OffNotification(channel SubscriptionChannel, handler NotificationHandler) {
 	t.notificationMu.Lock()
 	defer t.notificationMu.Unlock()
 	handlers := t.notificationHandlers[channel]
-	target := reflect.ValueOf(handler).Pointer()
+	target := funcPointer(handler)
 	for i, h := range handlers {
-		if reflect.ValueOf(h).Pointer() == target {
+		if funcPointer(h) == target {
 			t.notificationHandlers[channel] = append(handlers[:i], handlers[i+1:]...)
 			if len(t.notificationHandlers[channel]) == 0 {
 				delete(t.notificationHandlers, channel)
@@ -410,6 +410,12 @@ func (t *SubprocessTransport) OffNotification(channel SubscriptionChannel, handl
 			return
 		}
 	}
+}
+
+// funcPointer 提取函数值的代码指针，用于比较两个函数变量是否指向同一函数。
+// Go 的函数值内部结构为一个指向 funcval 的指针，funcval 首字段是代码指针。
+func funcPointer(fn NotificationHandler) uintptr {
+	return **(**uintptr)(unsafe.Pointer(&fn))
 }
 
 // dispatchNotification 将 control_notification 消息分发给注册的处理器。

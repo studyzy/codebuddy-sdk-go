@@ -136,7 +136,7 @@ func TestSubprocessTransport_OnNotification_ReceivesDispatch(t *testing.T) {
 	tr.OnNotification(SubscriptionChannelCommands, handler)
 
 	tr.dispatchNotification(map[string]any{
-		"channel": string(SubscriptionChannelCommands),
+		"channel":  string(SubscriptionChannelCommands),
 		"commands": []any{},
 	})
 	if count.Load() != 1 {
@@ -154,9 +154,9 @@ func TestSubprocessTransport_OnNotification_MultipleHandlers(t *testing.T) {
 		})
 	}
 	tr.dispatchNotification(map[string]any{"channel": string(SubscriptionChannelCommands)})
-	for i, c := range calls {
-		if c.Load() != 1 {
-			t.Errorf("handler[%d] called %d times, want 1", i, c.Load())
+	for i := range calls {
+		if calls[i].Load() != 1 {
+			t.Errorf("handler[%d] called %d times, want 1", i, calls[i].Load())
 		}
 	}
 }
@@ -359,17 +359,17 @@ func TestSession_HasPendingHistory_AllThreeConditions(t *testing.T) {
 func TestSession_HistoryConsumed_SetOnResultMessage(t *testing.T) {
 	tr := newMockTransport(10)
 	s := newSession(&Options{}, nil, "resume-id")
-	s.mu.Lock()
-	s.transport = tr
-	s.messageChannel = make(chan Message, 10)
-	s.closeCh = make(chan struct{})
-	s.mu.Unlock()
+	s.core.mu.Lock()
+	s.core.transport = tr
+	s.core.messageChannel = make(chan Message, 10)
+	s.core.closeCh = make(chan struct{})
+	s.core.mu.Unlock()
 
 	if s.historyConsumed.Load() {
 		t.Error("historyConsumed should be false initially")
 	}
 
-	s.wg.Add(1)
+	s.core.wg.Add(1)
 	go s.backgroundReader(context.Background())
 
 	tr.injectRaw(map[string]any{
@@ -380,7 +380,7 @@ func TestSession_HistoryConsumed_SetOnResultMessage(t *testing.T) {
 
 	// drain message channel
 	select {
-	case <-s.messageChannel:
+	case <-s.core.messageChannel:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for result message")
 	}
@@ -390,19 +390,19 @@ func TestSession_HistoryConsumed_SetOnResultMessage(t *testing.T) {
 	}
 
 	tr.closeMessages()
-	s.wg.Wait()
+	s.core.wg.Wait()
 }
 
 func TestSession_HistoryConsumed_NotSetOnOtherMessages(t *testing.T) {
 	tr := newMockTransport(10)
 	s := newSession(&Options{}, nil, "resume-id")
-	s.mu.Lock()
-	s.transport = tr
-	s.messageChannel = make(chan Message, 10)
-	s.closeCh = make(chan struct{})
-	s.mu.Unlock()
+	s.core.mu.Lock()
+	s.core.transport = tr
+	s.core.messageChannel = make(chan Message, 10)
+	s.core.closeCh = make(chan struct{})
+	s.core.mu.Unlock()
 
-	s.wg.Add(1)
+	s.core.wg.Add(1)
 	go s.backgroundReader(context.Background())
 
 	// inject a system message (not result)
@@ -417,7 +417,7 @@ func TestSession_HistoryConsumed_NotSetOnOtherMessages(t *testing.T) {
 	}
 
 	tr.closeMessages()
-	s.wg.Wait()
+	s.core.wg.Wait()
 }
 
 // ============================================================
@@ -426,8 +426,8 @@ func TestSession_HistoryConsumed_NotSetOnOtherMessages(t *testing.T) {
 
 func TestSession_SetHooks_ReplacesRegistry(t *testing.T) {
 	s := newSession(&Options{}, nil, "")
-	if len(s.hookRegistry) != 0 {
-		t.Errorf("initial hookRegistry should be empty, got %d", len(s.hookRegistry))
+	if len(s.core.hookRegistry) != 0 {
+		t.Errorf("initial hookRegistry should be empty, got %d", len(s.core.hookRegistry))
 	}
 
 	var called1, called2 atomic.Bool
@@ -440,7 +440,7 @@ func TestSession_SetHooks_ReplacesRegistry(t *testing.T) {
 		}}},
 	}
 	s.SetHooks(hooks1)
-	if len(s.hookRegistry) == 0 {
+	if len(s.core.hookRegistry) == 0 {
 		t.Error("hookRegistry should be populated after SetHooks")
 	}
 
@@ -456,7 +456,7 @@ func TestSession_SetHooks_ReplacesRegistry(t *testing.T) {
 	s.SetHooks(hooks2)
 
 	// Old callbacks should not be present
-	for id, cb := range s.hookRegistry {
+	for id, cb := range s.core.hookRegistry {
 		_ = id
 		_, _ = cb(context.Background(), nil, nil)
 	}
@@ -484,16 +484,16 @@ func TestSession_HandleControlRequest_OverrideBeatsOpts(t *testing.T) {
 			return &PermissionResultDeny{Message: "opts"}, nil
 		},
 	}, nil, "")
-	s.mu.Lock()
-	s.transport = tr
-	s.mu.Unlock()
+	s.core.mu.Lock()
+	s.core.transport = tr
+	s.core.mu.Unlock()
 
 	s.SetCanUseTool(func(_ context.Context, _ string, _ map[string]any, _ CanUseToolOptions) (PermissionResult, error) {
 		overrideCalled.Store(true)
 		return &PermissionResultAllow{}, nil
 	})
 
-	s.handleControlRequest(context.Background(), map[string]any{
+	s.core.handleControlRequest(context.Background(), map[string]any{
 		"request_id": "req-x",
 		"request": map[string]any{
 			"subtype":     "can_use_tool",
@@ -522,12 +522,12 @@ func TestSession_HandleControlRequest_FallsBackToOpts_WhenNoOverride(t *testing.
 			return &PermissionResultAllow{}, nil
 		},
 	}, nil, "")
-	s.mu.Lock()
-	s.transport = tr
-	s.mu.Unlock()
+	s.core.mu.Lock()
+	s.core.transport = tr
+	s.core.mu.Unlock()
 	// No SetCanUseTool → should fall back to opts
 
-	s.handleControlRequest(context.Background(), map[string]any{
+	s.core.handleControlRequest(context.Background(), map[string]any{
 		"request_id": "req-y",
 		"request": map[string]any{
 			"subtype":     "can_use_tool",
@@ -800,7 +800,7 @@ func TestClient_SetGetCanUseTool_OverrideWins(t *testing.T) {
 
 func TestClient_SetHooks_PopulatesRegistry(t *testing.T) {
 	c := NewClient(nil)
-	if len(c.hookRegistry) != 0 {
+	if len(c.core.hookRegistry) != 0 {
 		t.Errorf("expected empty registry initially")
 	}
 
@@ -814,10 +814,10 @@ func TestClient_SetHooks_PopulatesRegistry(t *testing.T) {
 		}}},
 	}
 	c.SetHooks(hooks)
-	if len(c.hookRegistry) == 0 {
+	if len(c.core.hookRegistry) == 0 {
 		t.Error("hookRegistry should be non-empty after SetHooks")
 	}
-	for _, cb := range c.hookRegistry {
+	for _, cb := range c.core.hookRegistry {
 		_, _ = cb(context.Background(), nil, nil)
 		break
 	}
@@ -841,17 +841,17 @@ func TestClient_HandleControlRequest_OverrideBeatsOpts(t *testing.T) {
 			return &PermissionResultDeny{}, nil
 		},
 	})
-	c.mu.Lock()
-	c.transport = tr
+	c.core.mu.Lock()
+	c.core.transport = tr
 	c.connected = true
-	c.mu.Unlock()
+	c.core.mu.Unlock()
 
 	c.SetCanUseTool(func(_ context.Context, _ string, _ map[string]any, _ CanUseToolOptions) (PermissionResult, error) {
 		overrideCalled.Store(true)
 		return &PermissionResultAllow{}, nil
 	})
 
-	c.handleControlRequest(context.Background(), map[string]any{
+	c.core.handleControlRequest(context.Background(), map[string]any{
 		"request_id": "c-req-1",
 		"request": map[string]any{
 			"subtype":     "can_use_tool",
@@ -932,19 +932,19 @@ func setupConnectedSession(t *testing.T) (*mockTransport, *Session, func()) {
 	t.Helper()
 	tr := newMockTransport(20)
 	s := newSession(&Options{}, nil, "")
-	s.mu.Lock()
-	s.transport = tr
-	s.messageChannel = make(chan Message, 20)
-	s.closeCh = make(chan struct{})
+	s.core.mu.Lock()
+	s.core.transport = tr
+	s.core.messageChannel = make(chan Message, 20)
+	s.core.closeCh = make(chan struct{})
 	s.initialized = true
-	s.mu.Unlock()
+	s.core.mu.Unlock()
 
-	s.wg.Add(1)
+	s.core.wg.Add(1)
 	go s.backgroundReader(context.Background())
 
 	cleanup := func() {
 		tr.closeMessages()
-		s.wg.Wait()
+		s.core.wg.Wait()
 	}
 	return tr, s, cleanup
 }

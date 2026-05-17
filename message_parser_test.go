@@ -459,8 +459,8 @@ func TestParseContentBlock(t *testing.T) {
 func TestParseContentBlocks(t *testing.T) {
 	items := []any{
 		map[string]any{"type": "text", "text": "first"},
-		map[string]any{"type": "bogus"},         // should be skipped
-		"not a map",                              // should be skipped
+		map[string]any{"type": "bogus"}, // should be skipped
+		"not a map",                     // should be skipped
 		map[string]any{"type": "text", "text": "second"},
 	}
 	blocks := ParseContentBlocks(items)
