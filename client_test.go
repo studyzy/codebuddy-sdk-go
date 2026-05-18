@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -464,7 +463,7 @@ func TestClient_MCPServerStatus(t *testing.T) {
 }
 
 func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
-	var hookCalled atomic.Bool
+	hookDone := make(chan struct{})
 	client, tr := newConnectedClient(t, 10)
 	defer func() {
 		tr.closeMessages()
@@ -473,7 +472,12 @@ func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
 
 	cbID := "hook_PreToolUse_0_0"
 	client.core.hookRegistry[cbID] = func(ctx context.Context, input map[string]any, toolUseID *string) (HookJSONOutput, error) {
-		hookCalled.Store(true)
+		select {
+		case <-hookDone:
+			// 已关闭，避免重复 close 触发 panic
+		default:
+			close(hookDone)
+		}
 		c := true
 		return HookJSONOutput{Continue: &c}, nil
 	}
@@ -488,12 +492,11 @@ func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
 		},
 	})
 
-	for i := 0; i < 200 && !hookCalled.Load(); i++ {
-		runtime.Gosched()
-	}
-
-	if !hookCalled.Load() {
-		t.Error("expected hook to be called")
+	select {
+	case <-hookDone:
+		// 成功调用
+	case <-time.After(2 * time.Second):
+		t.Error("expected hook to be called within 2s")
 	}
 }
 
@@ -729,7 +732,7 @@ done:
 
 // TestClient_HandleControlRequest_CanUseTool tests the can_use_tool path in handleControlRequest.
 func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
-	var permCalled atomic.Bool
+	permDone := make(chan struct{})
 	client, tr := connectClientWithMock(t, 20, nil)
 	defer func() {
 		tr.closeMessages()
@@ -739,7 +742,11 @@ func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
 	client.core.mu.Lock()
 	client.core.opts = &Options{
 		CanUseTool: func(ctx context.Context, toolName string, input map[string]any, o CanUseToolOptions) (PermissionResult, error) {
-			permCalled.Store(true)
+			select {
+			case <-permDone:
+			default:
+				close(permDone)
+			}
 			return &PermissionResultAllow{}, nil
 		},
 	}
@@ -756,12 +763,11 @@ func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
 		},
 	})
 
-	for i := 0; i < 200 && !permCalled.Load(); i++ {
-		runtime.Gosched()
-	}
-
-	if !permCalled.Load() {
-		t.Error("expected CanUseTool to be called")
+	select {
+	case <-permDone:
+		// 成功调用
+	case <-time.After(2 * time.Second):
+		t.Error("expected CanUseTool to be called within 2s")
 	}
 }
 
