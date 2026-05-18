@@ -128,10 +128,7 @@ func InstallMarketplace(opts InstallMarketplaceOptions) (PluginResult, error) {
 		return PluginResult{Message: fmt.Sprintf("marketplace %q already exists", opts.Name)}, nil
 	}
 
-	autoUpdate := true
-	if !opts.AutoUpdate {
-		autoUpdate = false
-	}
+	autoUpdate := opts.AutoUpdate
 	known[opts.Name] = map[string]any{
 		"source": map[string]any{
 			"source": "github",

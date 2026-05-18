@@ -89,7 +89,7 @@ func TestReadControlResponse_ContextCancel(t *testing.T) {
 	cancel() // cancel immediately
 	_, err := readControlResponse(ctx, ch, "r1")
 	if err == nil {
-		t.Fatal("expected error on cancelled context")
+		t.Fatal("expected error on canceled context")
 	}
 }
 
@@ -148,7 +148,7 @@ func TestAuthFlow_Wait_ContextCancelled(t *testing.T) {
 	cancel()
 	_, err := flow.Wait(ctx)
 	if err == nil {
-		t.Fatal("expected error on cancelled context")
+		t.Fatal("expected error on canceled context")
 	}
 }
 
@@ -241,7 +241,7 @@ func TestReadAuthURLCallback_ContextCancel(t *testing.T) {
 	ch := make(chan RawMessage)
 	_, _, err := readAuthURLCallback(ctx, ch, tr)
 	if err == nil {
-		t.Fatal("expected error on cancelled context")
+		t.Fatal("expected error on canceled context")
 	}
 }
 
@@ -352,7 +352,7 @@ func TestWaitForAuthResult_ContextCancel(t *testing.T) {
 	ch := make(chan RawMessage)
 	_, err := waitForAuthResult(ctx, ch, tr)
 	if err == nil {
-		t.Fatal("expected error on cancelled context")
+		t.Fatal("expected error on canceled context")
 	}
 }
 

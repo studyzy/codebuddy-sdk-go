@@ -165,9 +165,7 @@ func (s *SdkMcpServer) handleToolsCall(ctx context.Context, req jsonRPCRequest) 
 	// content 中的元素可能是 *TextContent / *ImageContent / *EmbeddedResource 或 map[string]any
 	var contentItems []any
 	if toolResult != nil {
-		for _, item := range toolResult.Content {
-			contentItems = append(contentItems, item)
-		}
+		contentItems = append(contentItems, toolResult.Content...)
 	}
 	if contentItems == nil {
 		contentItems = []any{}

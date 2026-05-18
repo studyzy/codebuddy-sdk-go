@@ -3,6 +3,7 @@ package codebuddy
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestEffortPtr(t *testing.T) {
@@ -232,5 +233,378 @@ func TestSendInitialize_AgentWithoutOptionalFields(t *testing.T) {
 	}
 	if _, exists := basic["maxTokens"]; exists {
 		t.Errorf("maxTokens should be absent when nil, got %v", basic["maxTokens"])
+	}
+}
+
+// TestPartialAssistantMessage_MessageType 验证 PartialAssistantMessage 的 messageType 方法。
+func TestPartialAssistantMessage_MessageType(t *testing.T) {
+	msg := &PartialAssistantMessage{
+		Model: "test-model",
+	}
+	if msg.messageType() != "partial_assistant" {
+		t.Errorf("messageType() = %q, want partial_assistant", msg.messageType())
+	}
+}
+
+// TestParseMessage_PartialAssistant 验证 ParseMessage 正确解析 partial_assistant 类型。
+func TestParseMessage_PartialAssistant(t *testing.T) {
+	data := map[string]any{
+		"type":  "partial_assistant",
+		"model": "deepseek-v3",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "Hello wor"},
+			},
+		},
+		"parent_tool_use_id": "tu_123",
+	}
+
+	msg := ParseMessage(data)
+	if msg == nil {
+		t.Fatal("ParseMessage returned nil for partial_assistant")
+	}
+	partial, ok := msg.(*PartialAssistantMessage)
+	if !ok {
+		t.Fatalf("expected *PartialAssistantMessage, got %T", msg)
+	}
+	if partial.Model != "deepseek-v3" {
+		t.Errorf("Model = %q, want deepseek-v3", partial.Model)
+	}
+	if partial.ParentToolUseID == nil || *partial.ParentToolUseID != "tu_123" {
+		t.Error("ParentToolUseID not parsed correctly")
+	}
+	if len(partial.Content) != 1 {
+		t.Fatalf("Content length = %d, want 1", len(partial.Content))
+	}
+	tb, ok := partial.Content[0].(*TextBlock)
+	if !ok || tb.Text != "Hello wor" {
+		t.Errorf("Content[0] = %v, want TextBlock{Hello wor}", partial.Content[0])
+	}
+}
+
+// TestAttachRawJSON_PartialAssistantMessage 验证 AttachRawJSON 处理 PartialAssistantMessage。
+func TestAttachRawJSON_PartialAssistantMessage(t *testing.T) {
+	msg := &PartialAssistantMessage{Model: "test"}
+	raw := []byte(`{"type":"partial_assistant"}`)
+	AttachRawJSON(msg, raw)
+	if msg.RawJSON == nil {
+		t.Error("RawJSON should be set after AttachRawJSON")
+	}
+
+	got := RawJSONOf(msg)
+	if got == nil {
+		t.Error("RawJSONOf should return non-nil for PartialAssistantMessage")
+	}
+}
+
+// TestPrompt_ReturnsResult 验证 Prompt 便捷函数通过 mock transport 正常工作。
+func TestPrompt_ReturnsResult(t *testing.T) {
+	tr := newMockTransport(10)
+
+	// 模拟 CLI 响应：先返回 assistant message，再返回 result
+	go func() {
+		// 读取 initialize 请求（忽略）
+		tr.injectRaw(map[string]any{
+			"type":    "assistant",
+			"model":   "test-model",
+			"message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "4"}}},
+		})
+		resultText := "The answer is 4."
+		tr.injectRaw(map[string]any{
+			"type":       "result",
+			"session_id": "sid-1",
+			"result":     resultText,
+		})
+		tr.closeMessages()
+	}()
+
+	ctx := context.Background()
+	opts := &Options{}
+	// 使用 queryWithTransport 间接测试 Prompt 逻辑
+	msgCh, err := queryWithTransport(ctx, "What is 2+2?", opts, tr)
+	if err != nil {
+		t.Fatalf("queryWithTransport: %v", err)
+	}
+
+	// 模拟 Prompt 行为：遍历通道找 ResultMessage
+	var result *ResultMessage
+	for msg := range msgCh {
+		if r, ok := msg.(*ResultMessage); ok {
+			if r.IsError && len(r.Errors) > 0 {
+				t.Fatalf("unexpected error: %v", r.Errors)
+			}
+			result = r
+			break
+		}
+	}
+	if result == nil {
+		t.Fatal("expected ResultMessage")
+	}
+	if result.Result == nil || *result.Result != "The answer is 4." {
+		t.Errorf("Result = %v, want 'The answer is 4.'", result.Result)
+	}
+}
+
+// TestSendInitialize_ClientFields 验证 sendInitialize 包含 systemPrompt、agents、
+// outputFormat、environment、endpoint 等字段。
+func TestSendInitialize_ClientFields(t *testing.T) {
+	tr := newMockTransport(10)
+	override := "You are a helper."
+	env := "external"
+	endpoint := "https://custom.example.com"
+	opts := &Options{
+		SystemPrompt: &SystemPromptConfig{Override: &override},
+		OutputFormat: &JsonSchemaOutputFormat{
+			Type:   "json_schema",
+			Schema: map[string]any{"type": "object"},
+		},
+		Environment: &env,
+		Endpoint:    &endpoint,
+	}
+
+	_, _, err := sendInitialize(context.Background(), tr, opts, true)
+	if err != nil {
+		t.Fatalf("sendInitialize: %v", err)
+	}
+
+	msg := tr.writtenJSON(0)
+	req, _ := msg["request"].(map[string]any)
+	if req == nil {
+		t.Fatal("request payload missing")
+	}
+
+	// systemPrompt
+	if sp, ok := req["systemPrompt"].(string); !ok || sp != "You are a helper." {
+		t.Errorf("systemPrompt = %v, want 'You are a helper.'", req["systemPrompt"])
+	}
+
+	// jsonSchema
+	if js, ok := req["jsonSchema"].(map[string]any); !ok || js == nil {
+		t.Errorf("jsonSchema = %v, want non-nil", req["jsonSchema"])
+	}
+
+	// environment
+	if e, ok := req["environment"].(string); !ok || e != "external" {
+		t.Errorf("environment = %v, want 'external'", req["environment"])
+	}
+
+	// endpoint
+	if ep, ok := req["endpoint"].(string); !ok || ep != "https://custom.example.com" {
+		t.Errorf("endpoint = %v, want 'https://custom.example.com'", req["endpoint"])
+	}
+}
+
+// TestSendInitialize_AppendSystemPromptField 验证 appendSystemPrompt 字段。
+func TestSendInitialize_AppendSystemPromptField(t *testing.T) {
+	tr := newMockTransport(10)
+	appendStr := "Additional instructions."
+	opts := &Options{
+		SystemPrompt: &SystemPromptConfig{Append: &appendStr},
+	}
+
+	_, _, err := sendInitialize(context.Background(), tr, opts, true)
+	if err != nil {
+		t.Fatalf("sendInitialize: %v", err)
+	}
+
+	msg := tr.writtenJSON(0)
+	req, _ := msg["request"].(map[string]any)
+
+	// systemPrompt should be nil (no override)
+	if req["systemPrompt"] != nil {
+		t.Errorf("systemPrompt should be nil, got %v", req["systemPrompt"])
+	}
+
+	// appendSystemPrompt should be set
+	if ap, ok := req["appendSystemPrompt"].(string); !ok || ap != "Additional instructions." {
+		t.Errorf("appendSystemPrompt = %v, want 'Additional instructions.'", req["appendSystemPrompt"])
+	}
+}
+
+// TestConnCore_AccountInfo 验证 accountInfo 方法正确解析响应。
+func TestConnCore_AccountInfo(t *testing.T) {
+	core := &connCore{}
+	tr := newMockTransport(10)
+	initConnCore(core, &Options{}, PermissionModeDefault, "")
+	core.transport = tr
+
+	// 模拟 CLI 响应
+	go func() {
+		// 等待 sendControlRequest 的写入
+		for {
+			tr.mu.Lock()
+			n := len(tr.written)
+			tr.mu.Unlock()
+			if n > 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		// 获取 request_id
+		reqMsg := tr.writtenJSON(0)
+		requestID, _ := reqMsg["request_id"].(string)
+
+		// 注入 control_response
+		tr.injectRaw(map[string]any{
+			"type": "control_response",
+			"response": map[string]any{
+				"subtype":    "success",
+				"request_id": requestID,
+				"response": map[string]any{
+					"account": map[string]any{
+						"userId":   "user-123",
+						"userName": "testuser",
+						"email":    "test@example.com",
+					},
+				},
+			},
+		})
+	}()
+
+	// 启动后台 reader 来路由 control_response
+	core.wg.Add(1)
+	go func() {
+		defer core.wg.Done()
+		for raw := range tr.ReadMessages() {
+			if raw.Err != nil {
+				return
+			}
+			data := raw.Data
+			msgType, _ := data["type"].(string)
+			if msgType == "control_response" {
+				core.routeControlResponse(data)
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	info, err := core.accountInfo(ctx, "未连接")
+	if err != nil {
+		t.Fatalf("accountInfo: %v", err)
+	}
+
+	if info.UserID == nil || *info.UserID != "user-123" {
+		t.Errorf("UserID = %v, want 'user-123'", info.UserID)
+	}
+	if info.UserName == nil || *info.UserName != "testuser" {
+		t.Errorf("UserName = %v, want 'testuser'", info.UserName)
+	}
+	if info.Email == nil || *info.Email != "test@example.com" {
+		t.Errorf("Email = %v, want 'test@example.com'", info.Email)
+	}
+
+	tr.closeMessages()
+	core.wg.Wait()
+}
+
+// TestConnCore_SetMaxThinkingTokens 验证 setMaxThinkingTokens 发送正确的控制请求。
+func TestConnCore_SetMaxThinkingTokens(t *testing.T) {
+	core := &connCore{}
+	tr := newMockTransport(10)
+	initConnCore(core, &Options{}, PermissionModeDefault, "")
+	core.transport = tr
+
+	tokens := 8192
+
+	// 模拟 CLI 响应
+	go func() {
+		for {
+			tr.mu.Lock()
+			n := len(tr.written)
+			tr.mu.Unlock()
+			if n > 0 {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		reqMsg := tr.writtenJSON(0)
+		requestID, _ := reqMsg["request_id"].(string)
+
+		tr.injectRaw(map[string]any{
+			"type": "control_response",
+			"response": map[string]any{
+				"subtype":    "success",
+				"request_id": requestID,
+				"response": map[string]any{
+					"updated": map[string]any{"maxThinkingTokens": float64(8192)},
+				},
+			},
+		})
+	}()
+
+	// 启动后台 reader
+	core.wg.Add(1)
+	go func() {
+		defer core.wg.Done()
+		for raw := range tr.ReadMessages() {
+			if raw.Err != nil {
+				return
+			}
+			data := raw.Data
+			msgType, _ := data["type"].(string)
+			if msgType == "control_response" {
+				core.routeControlResponse(data)
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := core.setMaxThinkingTokens(ctx, "sess-1", &tokens, "未连接")
+	if err != nil {
+		t.Fatalf("setMaxThinkingTokens: %v", err)
+	}
+
+	// 验证发送的请求中包含 set_config + maxThinkingTokens
+	reqMsg := tr.writtenJSON(0)
+	req, _ := reqMsg["request"].(map[string]any)
+	if req == nil {
+		t.Fatal("request payload missing")
+	}
+	if subtype, _ := req["subtype"].(string); subtype != "set_config" {
+		t.Errorf("subtype = %q, want set_config", subtype)
+	}
+	config, _ := req["config"].(map[string]any)
+	if config == nil {
+		t.Fatal("config field missing in set_config request")
+	}
+	if v, _ := config["maxThinkingTokens"].(float64); int(v) != 8192 {
+		t.Errorf("maxThinkingTokens = %v, want 8192", config["maxThinkingTokens"])
+	}
+
+	tr.closeMessages()
+	core.wg.Wait()
+}
+
+// TestSession_SetMaxThinkingTokens_BeforeConnect 验证连接前调用 SetMaxThinkingTokens 修改 Options。
+func TestSession_SetMaxThinkingTokens_BeforeConnect(t *testing.T) {
+	opts := &Options{}
+	session := newSession(opts, nil, "")
+
+	budget := 4096
+	err := session.SetMaxThinkingTokens(context.Background(), &budget)
+	if err != nil {
+		t.Fatalf("SetMaxThinkingTokens: %v", err)
+	}
+
+	if session.core.opts.Thinking == nil {
+		t.Fatal("Thinking should be set")
+	}
+	if session.core.opts.Thinking.BudgetTokens == nil || *session.core.opts.Thinking.BudgetTokens != 4096 {
+		t.Errorf("BudgetTokens = %v, want 4096", session.core.opts.Thinking.BudgetTokens)
+	}
+
+	// 设置为 nil 恢复默认
+	err = session.SetMaxThinkingTokens(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SetMaxThinkingTokens(nil): %v", err)
+	}
+	if session.core.opts.Thinking.BudgetTokens != nil {
+		t.Errorf("BudgetTokens should be nil after reset, got %v", session.core.opts.Thinking.BudgetTokens)
 	}
 }

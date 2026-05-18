@@ -20,10 +20,9 @@ linters:
     - errcheck       # 检测未处理的错误返回值
     - govet          # 标准 go vet 检查
     - ineffassign    # 检测无效赋值
-    - staticcheck    # 集成 SA/ST/QF 全部静态检查
+    - staticcheck    # 集成 SA/ST/QF 全部静态检查（已含 gosimple）
     - unused         # 检测未使用的常量、变量、函数、类型
     - misspell       # 拼写检查
-    - gosimple       # 简化建议（已并入 staticcheck，但保留以提升可读性）
     - bodyclose      # 检测 HTTP response body 未关闭
     - copyloopvar    # 检测循环变量复用问题（Go 1.22+）
 
@@ -32,6 +31,7 @@ linters:
       # 排除一些在该项目里语义上明确忽略的调用
       exclude-functions:
         - (io.Closer).Close
+        - (*github.com/studyzy/codebuddy-sdk-go.AuthFlow).Cancel
         - fmt.Fprintf
         - fmt.Fprintln
         - fmt.Fprint
@@ -41,6 +41,8 @@ linters:
         - all
         # ST1003: 命名风格（项目中存在 SDK/MCP/JSON/HTTP 等大写缩写，与项目规范一致）
         - "-ST1003"
+        # ST1000: 包注释格式（项目按"一个包注释 + 多个文件级注释"组织，无需每个文件都以 "Package xxx" 开头）
+        - "-ST1000"
 
     misspell:
       locale: US

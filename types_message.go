@@ -43,6 +43,25 @@ type AssistantMessage struct {
 // messageType 返回消息类型标识。
 func (m *AssistantMessage) messageType() string { return "assistant" }
 
+// PartialAssistantMessage 表示流式传输中的部分助手消息，type="assistant"。
+// 仅当 Options.IncludePartialMessages 为 true 时产生，
+// 包含不完整的内容块（尚在生成中的文本或工具调用）。
+type PartialAssistantMessage struct {
+	// Content 是当前已收到的部分内容块列表。
+	Content []ContentBlock
+	// Model 是使用的模型名称。
+	Model string
+	// ParentToolUseID 是父工具调用 ID。
+	ParentToolUseID *string
+	// Error 是错误信息（如有）。
+	Error *string
+	// RawJSON 是保留的 CLI 原始 JSON，供上层按原格式透传。
+	RawJSON json.RawMessage
+}
+
+// messageType 返回消息类型标识。
+func (m *PartialAssistantMessage) messageType() string { return "partial_assistant" }
+
 // SystemMessage 表示系统消息，type="system"。
 type SystemMessage struct {
 	// Subtype 是系统消息子类型。
@@ -232,6 +251,8 @@ func AttachRawJSON(msg Message, raw json.RawMessage) {
 		m.RawJSON = copied
 	case *AssistantMessage:
 		m.RawJSON = copied
+	case *PartialAssistantMessage:
+		m.RawJSON = copied
 	case *SystemMessage:
 		m.RawJSON = copied
 	case *ResultMessage:
@@ -259,6 +280,8 @@ func RawJSONOf(msg Message) json.RawMessage {
 	case *UserMessage:
 		return m.RawJSON
 	case *AssistantMessage:
+		return m.RawJSON
+	case *PartialAssistantMessage:
 		return m.RawJSON
 	case *SystemMessage:
 		return m.RawJSON

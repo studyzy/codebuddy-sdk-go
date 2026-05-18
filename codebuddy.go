@@ -10,6 +10,45 @@ import (
 	"fmt"
 )
 
+// Prompt 是一次性查询的便捷函数，发送 prompt 并直接返回最终结果。
+//
+// 内部调用 Query 发起查询，自动遍历消息通道直到收到 ResultMessage。
+// 若结果包含错误（ResultMessage.IsError），返回 ExecutionError。
+// 适合不需要逐条处理中间消息的简单查询场景。
+//
+// 参数:
+//   - ctx：控制取消和超时
+//   - message：查询内容字符串
+//   - opts：可选配置，nil 时使用默认值
+//
+// 返回:
+//   - *ResultMessage：查询结果
+//   - error：查询失败时返回错误
+//
+// 示例:
+//
+//	result, err := codebuddy.Prompt(ctx, "What is 2+2?", nil)
+//	if err != nil { log.Fatal(err) }
+//	fmt.Println(*result.Result)
+func Prompt(ctx context.Context, message string, opts *Options) (*ResultMessage, error) {
+	msgCh, err := Query(ctx, message, opts)
+	if err != nil {
+		return nil, err
+	}
+	for msg := range msgCh {
+		switch m := msg.(type) {
+		case *ResultMessage:
+			if m.IsError && len(m.Errors) > 0 {
+				return nil, NewExecutionError(m.Errors, m.Subtype)
+			}
+			return m, nil
+		case *ErrorMessage:
+			return nil, &CLIConnectionError{Message: m.Error}
+		}
+	}
+	return nil, &CLIConnectionError{Message: "未收到结果消息"}
+}
+
 // Query 向 CodeBuddy 发送单次查询，返回消息通道。
 //
 // 适用于无需管理连接生命周期的一次性查询。函数建立连接后立即返回通道，

@@ -500,6 +500,20 @@ func (c *connCore) unsubscribeFromCommands(handler NotificationHandler) {
 
 // --- 动态配置更新 ---
 
+// setMaxThinkingTokens 动态更新模型思考 Token 预算。
+// 通过 set_config 控制请求将变更同步到 CLI。
+// tokens 为 nil 时使用模型默认值。
+func (c *connCore) setMaxThinkingTokens(ctx context.Context, sessionID string, tokens *int, closedMsg string) error {
+	config := map[string]any{}
+	if tokens != nil {
+		config["maxThinkingTokens"] = *tokens
+	} else {
+		config["maxThinkingTokens"] = nil
+	}
+	_, err := c.setConfig(ctx, sessionID, config, closedMsg)
+	return err
+}
+
 // setConfig 通过 set_config 控制请求动态更新 CLI 配置。
 // 仅在连接后可调用。返回已更新的配置项和失败的配置项。
 func (c *connCore) setConfig(ctx context.Context, sessionID string, config map[string]any, closedMsg string) (*SetConfigResult, error) {
@@ -530,6 +544,31 @@ func (c *connCore) setConfig(ctx context.Context, sessionID string, config map[s
 }
 
 // --- 中断信号 ---
+
+// accountInfo 从 CLI 获取当前账户信息。
+func (c *connCore) accountInfo(ctx context.Context, closedMsg string) (*AccountInfo, error) {
+	resp, err := c.sendControlRequest(ctx, map[string]any{"subtype": "account_info"}, closedMsg)
+	if err != nil {
+		return nil, err
+	}
+	account, _ := resp["account"].(map[string]any)
+	if account == nil {
+		account = resp // CLI 可能直接在 response 层返回字段
+	}
+	info := &AccountInfo{
+		Email:            getStringPtr(account, "email"),
+		Organization:     getStringPtr(account, "organization"),
+		SubscriptionType: getStringPtr(account, "subscriptionType"),
+		TokenSource:      getStringPtr(account, "tokenSource"),
+		APIKeySource:     getStringPtr(account, "apiKeySource"),
+		UserID:           getStringPtr(account, "userId"),
+		UserName:         getStringPtr(account, "userName"),
+		UserNickname:     getStringPtr(account, "userNickname"),
+		EnterpriseID:     getStringPtr(account, "enterpriseId"),
+		Enterprise:       getStringPtr(account, "enterprise"),
+	}
+	return info, nil
+}
 
 // interrupt 发送中断信号，触发 CLI 停止当前执行。
 // extraFields 允许调用者添加额外字段（如 Session 的 session_id）。

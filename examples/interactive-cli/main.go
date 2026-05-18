@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/chzyer/readline"
+
 	"github.com/studyzy/codebuddy-sdk-go"
 )
 

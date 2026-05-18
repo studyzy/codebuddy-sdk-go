@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -463,7 +464,7 @@ func TestClient_MCPServerStatus(t *testing.T) {
 }
 
 func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
-	hookCalled := false
+	var hookCalled atomic.Bool
 	client, tr := newConnectedClient(t, 10)
 	defer func() {
 		tr.closeMessages()
@@ -472,7 +473,7 @@ func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
 
 	cbID := "hook_PreToolUse_0_0"
 	client.core.hookRegistry[cbID] = func(ctx context.Context, input map[string]any, toolUseID *string) (HookJSONOutput, error) {
-		hookCalled = true
+		hookCalled.Store(true)
 		c := true
 		return HookJSONOutput{Continue: &c}, nil
 	}
@@ -487,11 +488,11 @@ func TestClient_HandleControlRequest_HookCallback(t *testing.T) {
 		},
 	})
 
-	for i := 0; i < 200 && !hookCalled; i++ {
+	for i := 0; i < 200 && !hookCalled.Load(); i++ {
 		runtime.Gosched()
 	}
 
-	if !hookCalled {
+	if !hookCalled.Load() {
 		t.Error("expected hook to be called")
 	}
 }
@@ -664,7 +665,7 @@ func TestClient_SetModel_WithSession(t *testing.T) {
 }
 
 // TestClient_ReceiveResponse_ContextCancel tests that ReceiveResponse
-// returns when context is cancelled.
+// returns when context is canceled.
 func TestClient_ReceiveResponse_ContextCancel(t *testing.T) {
 	client, tr := newConnectedClient(t, 10)
 	defer func() {
@@ -677,12 +678,12 @@ func TestClient_ReceiveResponse_ContextCancel(t *testing.T) {
 
 	_, err := client.ReceiveResponse(ctx)
 	if err == nil {
-		t.Fatal("expected error when context is cancelled")
+		t.Fatal("expected error when context is canceled")
 	}
 }
 
 // TestClient_SendControlRequest_ContextCancel tests that sendControlRequest
-// returns when context is cancelled before any response.
+// returns when context is canceled before any response.
 func TestClient_SendControlRequest_ContextCancel(t *testing.T) {
 	client, tr := newConnectedClient(t, 20)
 	defer func() {
@@ -720,7 +721,7 @@ done:
 	select {
 	case err := <-errCh:
 		if err == nil {
-			t.Error("expected error when context is cancelled")
+			t.Error("expected error when context is canceled")
 		}
 	case <-ctx.Done():
 	}
@@ -728,7 +729,7 @@ done:
 
 // TestClient_HandleControlRequest_CanUseTool tests the can_use_tool path in handleControlRequest.
 func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
-	permCalled := false
+	var permCalled atomic.Bool
 	client, tr := connectClientWithMock(t, 20, nil)
 	defer func() {
 		tr.closeMessages()
@@ -738,7 +739,7 @@ func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
 	client.core.mu.Lock()
 	client.core.opts = &Options{
 		CanUseTool: func(ctx context.Context, toolName string, input map[string]any, o CanUseToolOptions) (PermissionResult, error) {
-			permCalled = true
+			permCalled.Store(true)
 			return &PermissionResultAllow{}, nil
 		},
 	}
@@ -755,11 +756,11 @@ func TestClient_HandleControlRequest_CanUseTool(t *testing.T) {
 		},
 	})
 
-	for i := 0; i < 200 && !permCalled; i++ {
+	for i := 0; i < 200 && !permCalled.Load(); i++ {
 		runtime.Gosched()
 	}
 
-	if !permCalled {
+	if !permCalled.Load() {
 		t.Error("expected CanUseTool to be called")
 	}
 }

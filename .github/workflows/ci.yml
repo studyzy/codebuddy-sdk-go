@@ -47,9 +47,9 @@ jobs:
           fi
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.64.8
+          version: v2.1.6
           args: --timeout=5m
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -82,14 +82,11 @@ jobs:
         run: go test -timeout 120s ./...
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Race detector：单独跑、允许失败，用于持续暴露并发问题但不阻塞 CI
-  # 项目当前已知存在并发问题（参见 client.go backgroundReader/Disconnect），
-  # 修复后可移除 continue-on-error。
+  # Race detector：使用 -race 运行测试，作为强制门禁防止再引入并发 bug
   # ─────────────────────────────────────────────────────────────────────────
   race:
-    name: Race Detector (advisory)
+    name: Race Detector
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,6 +102,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────
   # Build Examples：确保 examples 始终可编译
+  # examples/ 是独立 Go module（通过 replace 指向上级），需要单独 cd 进去构建
   # ─────────────────────────────────────────────────────────────────────────
   build-examples:
     name: Build Examples (${{ matrix.os }})
@@ -127,7 +125,8 @@ jobs:
         run: go build ./...
 
       - name: Build all examples
-        run: go build ./examples/...
+        working-directory: examples
+        run: go build ./...
 
   # ─────────────────────────────────────────────────────────────────────────
   # Coverage：在 Linux 上单独运行覆盖率检查，阈值 60%

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestGetCLIPath_EnvVar verifies that CODEBUDDY_CODE_PATH is honoured when it
+// TestGetCLIPath_EnvVar verifies that CODEBUDDY_CODE_PATH is honored when it
 // points to a file that actually exists on disk.
 func TestGetCLIPath_EnvVar(t *testing.T) {
 	// Create a real temp file so that os.Stat succeeds inside GetCLIPath.

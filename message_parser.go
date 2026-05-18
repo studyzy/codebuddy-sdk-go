@@ -117,6 +117,24 @@ func ParseMessage(data map[string]any) Message {
 			Error:           errStr,
 		}
 
+	case "partial_assistant":
+		msgData, _ := data["message"].(map[string]any)
+		var blocks []ContentBlock
+		if msgData != nil {
+			if contentList, ok := msgData["content"].([]any); ok {
+				blocks = ParseContentBlocks(contentList)
+			}
+		}
+		model := getString(data, "model")
+		parentID := getStringPtr(data, "parent_tool_use_id")
+		errStr := getStringPtr(data, "error")
+		return &PartialAssistantMessage{
+			Content:         blocks,
+			Model:           model,
+			ParentToolUseID: parentID,
+			Error:           errStr,
+		}
+
 	case "system":
 		subtype := getString(data, "subtype")
 		switch subtype {

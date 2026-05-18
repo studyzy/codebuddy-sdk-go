@@ -370,7 +370,7 @@ func TestSession_HistoryConsumed_SetOnResultMessage(t *testing.T) {
 	}
 
 	s.core.wg.Add(1)
-	go s.backgroundReader(context.Background())
+	go s.backgroundReader(context.Background(), tr)
 
 	tr.injectRaw(map[string]any{
 		"type":     "result",
@@ -403,7 +403,7 @@ func TestSession_HistoryConsumed_NotSetOnOtherMessages(t *testing.T) {
 	s.core.mu.Unlock()
 
 	s.core.wg.Add(1)
-	go s.backgroundReader(context.Background())
+	go s.backgroundReader(context.Background(), tr)
 
 	// inject a system message (not result)
 	tr.injectRaw(map[string]any{
@@ -940,7 +940,7 @@ func setupConnectedSession(t *testing.T) (*mockTransport, *Session, func()) {
 	s.core.mu.Unlock()
 
 	s.core.wg.Add(1)
-	go s.backgroundReader(context.Background())
+	go s.backgroundReader(context.Background(), tr)
 
 	cleanup := func() {
 		tr.closeMessages()

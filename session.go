@@ -384,9 +384,52 @@ func (s *Session) SetConfig(ctx context.Context, config map[string]any) (*SetCon
 	return s.core.setConfig(ctx, s.id, config, "未连接")
 }
 
+// SetMaxThinkingTokens 动态更新模型思考 Token 预算。
+//
+//   - 连接前：修改 Options 中的 Thinking.BudgetTokens，在下次 Connect 时生效
+//   - 连接后：通过 set_config 控制请求将变更同步到 CLI
+//
+// tokens 为 nil 时使用模型默认值。
+//
+// 示例：
+//
+//	budget := 8192
+//	session.SetMaxThinkingTokens(ctx, &budget) // 设置为 8192 tokens
+//	session.SetMaxThinkingTokens(ctx, nil)       // 恢复模型默认值
+func (s *Session) SetMaxThinkingTokens(ctx context.Context, tokens *int) error {
+	s.core.mu.Lock()
+	transport := s.core.transport
+	ready := s.initialized
+	s.core.mu.Unlock()
+
+	if !ready || transport == nil {
+		// 连接前：更新 Options（下次 Connect 时生效）
+		if tokens != nil {
+			if s.core.opts.Thinking == nil {
+				s.core.opts.Thinking = &ThinkingConfig{Type: "enabled"}
+			}
+			s.core.opts.Thinking.BudgetTokens = tokens
+		} else {
+			if s.core.opts.Thinking != nil {
+				s.core.opts.Thinking.BudgetTokens = nil
+			}
+		}
+		return nil
+	}
+
+	// 连接后：发送控制请求
+	return s.core.setMaxThinkingTokens(ctx, s.id, tokens, "未连接")
+}
+
 // MCPServerStatus 查询 MCP 服务器状态列表。
 func (s *Session) MCPServerStatus(ctx context.Context) ([]MCPServerStatus, error) {
 	return s.core.mcpServerStatus(ctx, "未连接")
+}
+
+// AccountInfo 从 CLI 获取当前账户信息。
+// 需要会话已连接。
+func (s *Session) AccountInfo(ctx context.Context) (*AccountInfo, error) {
+	return s.core.accountInfo(ctx, "未连接")
 }
 
 // SetHooks 替换 Hook 回调注册表，不向 CLI 发送任何控制请求。
@@ -607,7 +650,7 @@ func (s *Session) doConnect(ctx context.Context) error {
 
 	// 启动后台读取 goroutine
 	s.core.wg.Add(1)
-	go s.backgroundReader(ctx)
+	go s.backgroundReader(ctx, t)
 
 	// 等待 initialize 响应（带超时）
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -635,7 +678,11 @@ func (s *Session) doConnect(ctx context.Context) error {
 }
 
 // backgroundReader 在独立 goroutine 中持续读取 transport 消息。
-func (s *Session) backgroundReader(ctx context.Context) {
+//
+// transport 由调用方在启动时显式传入并捕获为局部变量，避免在循环中
+// 通过 s.core.transport 字段访问 —— 该字段会在 Close 时被并发置 nil，
+// 直接读取会触发数据竞争。
+func (s *Session) backgroundReader(ctx context.Context, transport Transport) {
 	defer s.core.wg.Done()
 	defer close(s.core.messageChannel)
 
@@ -644,7 +691,7 @@ func (s *Session) backgroundReader(ctx context.Context) {
 		case <-s.core.closeCh:
 			s.core.drainPendingResponses()
 			return
-		case raw, ok := <-s.core.transport.ReadMessages():
+		case raw, ok := <-transport.ReadMessages():
 			if !ok {
 				s.core.drainPendingResponses()
 				return

@@ -243,7 +243,6 @@ func TestParseMessage(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.data == nil {
 				t.Fatal("fixture data is nil — check testdata/messages.json")
@@ -436,7 +435,6 @@ func TestParseContentBlock(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			b := ParseContentBlock(tc.data)
 			if tc.wantNil {

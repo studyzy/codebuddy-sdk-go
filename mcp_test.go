@@ -392,7 +392,7 @@ func TestCreateSDKMCPServer(t *testing.T) {
 }
 
 // TestToolHandler_RichCallToolResult verifies that a ToolHandler returning
-// a *CallToolResult with multiple content types is serialised correctly.
+// a *CallToolResult with multiple content types is serialized correctly.
 func TestToolHandler_RichCallToolResult(t *testing.T) {
 	s := NewSdkMcpServer("rich-server", "1.0.0")
 	s.RegisterTool(&ToolDefinition{
