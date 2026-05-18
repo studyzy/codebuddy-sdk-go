@@ -55,6 +55,12 @@ const (
 	HookSessionStart HookEvent = "SessionStart"
 	// HookSessionEnd 表示会话结束时触发的事件。
 	HookSessionEnd HookEvent = "SessionEnd"
+	// HookWorktreeCreate 表示创建隔离 worktree 时触发的事件，
+	// 可在此完成隔离环境初始化（如复制配置、安装依赖等）。
+	HookWorktreeCreate HookEvent = "WorktreeCreate"
+	// HookWorktreeRemove 表示删除隔离 worktree 时触发的事件，
+	// 可在此清理隔离环境资源。
+	HookWorktreeRemove HookEvent = "WorktreeRemove"
 )
 
 // SettingSource 表示配置来源。

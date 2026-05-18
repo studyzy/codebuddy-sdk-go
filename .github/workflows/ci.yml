@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# 取消同一 PR/分支的旧运行，节省 CI 资源
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Lint：仅在 Linux 上跑一次，使用 golangci-lint 官方 Action
+  # ─────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt check
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [ -n "$fmt_out" ]; then
+            echo "以下文件未通过 gofmt：" >&2
+            echo "$fmt_out" >&2
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          args: --timeout=5m
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Test：多 OS 并行运行单元测试
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Run tests
+        run: go test -timeout 120s ./...
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Race detector：单独跑、允许失败，用于持续暴露并发问题但不阻塞 CI
+  # 项目当前已知存在并发问题（参见 client.go backgroundReader/Disconnect），
+  # 修复后可移除 continue-on-error。
+  # ─────────────────────────────────────────────────────────────────────────
+  race:
+    name: Race Detector (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with -race
+        run: go test -timeout 180s -race ./...
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Build Examples：确保 examples 始终可编译
+  # ─────────────────────────────────────────────────────────────────────────
+  build-examples:
+    name: Build Examples (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build main package
+        run: go build ./...
+
+      - name: Build all examples
+        run: go build ./examples/...
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Coverage：在 Linux 上单独运行覆盖率检查，阈值 60%
+  # ─────────────────────────────────────────────────────────────────────────
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with coverage
+        run: go test -timeout 120s -coverprofile=coverage.out -covermode=atomic .
+
+      - name: Show coverage
+        id: cover
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "总覆盖率: ${total}%"
+
+      - name: Enforce minimum coverage (60%)
+        run: |
+          total="${{ steps.cover.outputs.total }}"
+          # 使用 awk 做浮点比较
+          awk -v t="$total" 'BEGIN { if (t+0 < 60.0) { printf("覆盖率 %s%% 低于 60%% 阈值\n", t); exit 1 } else { printf("覆盖率 %s%% 达标\n", t) } }'
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.txt
+          retention-days: 14

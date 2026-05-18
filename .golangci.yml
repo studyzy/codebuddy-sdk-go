@@ -1,0 +1,73 @@
+# golangci-lint 配置
+# 文档: https://golangci-lint.run/usage/configuration/
+#
+# 该配置与项目 AGENTS.md 中的 Go 编码规范对齐：
+# - 强制 gofmt / goimports 格式化
+# - 启用 staticcheck 系列静态检查
+# - 启用 govet 标准检查
+# - 检测 ineffassign、unused、错误未处理等常见问题
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck       # 检测未处理的错误返回值
+    - govet          # 标准 go vet 检查
+    - ineffassign    # 检测无效赋值
+    - staticcheck    # 集成 SA/ST/QF 全部静态检查
+    - unused         # 检测未使用的常量、变量、函数、类型
+    - misspell       # 拼写检查
+    - gosimple       # 简化建议（已并入 staticcheck，但保留以提升可读性）
+    - bodyclose      # 检测 HTTP response body 未关闭
+    - copyloopvar    # 检测循环变量复用问题（Go 1.22+）
+
+  settings:
+    errcheck:
+      # 排除一些在该项目里语义上明确忽略的调用
+      exclude-functions:
+        - (io.Closer).Close
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+
+    staticcheck:
+      checks:
+        - all
+        # ST1003: 命名风格（项目中存在 SDK/MCP/JSON/HTTP 等大写缩写，与项目规范一致）
+        - "-ST1003"
+
+    misspell:
+      locale: US
+
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # 测试文件允许更宽松的错误处理
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+      # examples 主要用于演示，宽松对待错误处理
+      - path: examples/
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/studyzy/codebuddy-sdk-go

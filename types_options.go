@@ -32,6 +32,10 @@ type AgentDefinition struct {
 	DisallowedTools []string
 	// Model 是 Agent 使用的模型（可选，不指定则继承父级）。
 	Model *string
+	// Temperature 是模型采样温度（可选，nil 表示使用模型默认值）。
+	Temperature *float64
+	// MaxTokens 是单次响应最大 Token 数（可选，nil 表示使用模型默认值）。
+	MaxTokens *int
 }
 
 // SandboxSettings 表示沙箱执行环境配置。

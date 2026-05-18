@@ -19,6 +19,18 @@ const (
 	ToolMultiEdit = "MultiEdit"
 	// ToolNotebookEdit 是编辑 Notebook 的工具名称。
 	ToolNotebookEdit = "NotebookEdit"
+	// ToolGlob 是按 glob 模式搜索文件路径的工具名称。
+	ToolGlob = "Glob"
+	// ToolGrep 是按正则在文件内容中搜索的工具名称。
+	ToolGrep = "Grep"
+	// ToolBash 是执行 Shell 命令的工具名称。
+	ToolBash = "Bash"
+	// ToolTask 是派生子 Agent 执行任务的工具名称。
+	ToolTask = "Task"
+	// ToolWebFetch 是抓取 URL 内容的工具名称。
+	ToolWebFetch = "WebFetch"
+	// ToolWebSearch 是执行联网搜索的工具名称。
+	ToolWebSearch = "WebSearch"
 )
 
 // =============================================================================

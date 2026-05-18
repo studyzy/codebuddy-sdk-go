@@ -544,13 +544,20 @@ func (s *Session) doConnect(ctx context.Context) error {
 	if len(s.core.opts.Agents) > 0 {
 		m := make(map[string]any)
 		for name, ag := range s.core.opts.Agents {
-			m[name] = map[string]any{
+			entry := map[string]any{
 				"description":     ag.Description,
 				"prompt":          ag.Prompt,
 				"tools":           ag.Tools,
 				"disallowedTools": ag.DisallowedTools,
 				"model":           ag.Model,
 			}
+			if ag.Temperature != nil {
+				entry["temperature"] = *ag.Temperature
+			}
+			if ag.MaxTokens != nil {
+				entry["maxTokens"] = *ag.MaxTokens
+			}
+			m[name] = entry
 		}
 		agentsConfig = m
 	}

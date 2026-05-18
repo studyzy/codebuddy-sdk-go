@@ -20,6 +20,25 @@ var (
 	cliVersionOnce  sync.Once
 )
 
+// 公共环境变量常量
+//
+// 这些环境变量名与官方 CodeBuddy SDK（TypeScript/Python）保持一致，
+// 供调用方在构造 Options.Env 或读取系统环境时使用，避免硬编码字符串。
+const (
+	// EnvAPIKey 是用户 API Key 的环境变量名（CODEBUDDY_API_KEY）。
+	// 设置后，CLI 会优先使用该 Key 进行鉴权。
+	EnvAPIKey = "CODEBUDDY_API_KEY"
+	// EnvAuthToken 是 OAuth/会话令牌的环境变量名（CODEBUDDY_AUTH_TOKEN）。
+	// 通常用于企业 OAuth 2.0 Client Credentials 场景。
+	EnvAuthToken = "CODEBUDDY_AUTH_TOKEN"
+	// EnvInternetEnvironment 是认证环境标识的环境变量名（CODEBUDDY_INTERNET_ENVIRONMENT）。
+	// 取值如 "external" / "internal" / "ioa" / "cloudhosted"。
+	EnvInternetEnvironment = "CODEBUDDY_INTERNET_ENVIRONMENT"
+	// EnvCodePath 是 CLI 可执行文件路径的环境变量名（CODEBUDDY_CODE_PATH）。
+	// SDK 会按此路径查找 codebuddy-headless 二进制。
+	EnvCodePath = "CODEBUDDY_CODE_PATH"
+)
+
 // platformBinaryNames 各平台的 CLI 二进制文件名
 var platformBinaryNames = map[string]string{
 	"darwin":  "codebuddy-headless",
@@ -39,12 +58,12 @@ func GetCLIPath() (string, error) {
 	arch := runtime.GOARCH
 
 	// 1. 环境变量优先
-	if envPath := os.Getenv("CODEBUDDY_CODE_PATH"); envPath != "" {
+	if envPath := os.Getenv(EnvCodePath); envPath != "" {
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath, nil
 		}
 		// 文件不存在，打印警告但继续尝试其他方式
-		fmt.Fprintf(os.Stderr, "警告: CODEBUDDY_CODE_PATH 指向 '%s' 但文件不存在，尝试其他路径\n", envPath)
+		fmt.Fprintf(os.Stderr, "警告: %s 指向 '%s' 但文件不存在，尝试其他路径\n", EnvCodePath, envPath)
 	}
 
 	binaryName, ok := platformBinaryNames[osName]
@@ -75,7 +94,7 @@ func GetCLIPath() (string, error) {
 	}
 
 	return "", &CLINotFoundError{
-		Message:  fmt.Sprintf("CodeBuddy CLI 可执行文件未找到（平台: %s/%s）。\n请安装 CodeBuddy CLI 或通过 CODEBUDDY_CODE_PATH 环境变量指定路径。", osName, arch),
+		Message:  fmt.Sprintf("CodeBuddy CLI 可执行文件未找到（平台: %s/%s）。\n请安装 CodeBuddy CLI 或通过 %s 环境变量指定路径。", osName, arch, EnvCodePath),
 		Platform: osName,
 		Arch:     arch,
 	}

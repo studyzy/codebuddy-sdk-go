@@ -625,12 +625,12 @@ func TestParseMessage_TopicMessage(t *testing.T) {
 func TestParseMessage_ToolProgressMessage(t *testing.T) {
 	data := map[string]any{
 		"type":                 "tool_progress",
-		"tool_use_id":         "tu-123",
-		"tool_name":           "Bash",
-		"parent_tool_use_id":  "parent-1",
+		"tool_use_id":          "tu-123",
+		"tool_name":            "Bash",
+		"parent_tool_use_id":   "parent-1",
 		"elapsed_time_seconds": 5.2,
-		"uuid":                "ev-1",
-		"session_id":          "s-1",
+		"uuid":                 "ev-1",
+		"session_id":           "s-1",
 	}
 	msg := ParseMessage(data)
 	tp, ok := msg.(*ToolProgressMessage)
@@ -739,15 +739,15 @@ func TestParseMessage_SystemInit_StillWorksAsSystemMessage(t *testing.T) {
 
 func TestParseMessage_ResultWithPermissionDenials(t *testing.T) {
 	data := map[string]any{
-		"type":          "result",
-		"subtype":       "success",
-		"session_id":    "s-1",
-		"duration_ms":   float64(1000),
-		"is_error":      false,
-		"num_turns":     float64(1),
-		"result":        "ok",
+		"type":           "result",
+		"subtype":        "success",
+		"session_id":     "s-1",
+		"duration_ms":    float64(1000),
+		"is_error":       false,
+		"num_turns":      float64(1),
+		"result":         "ok",
 		"total_cost_usd": float64(0.01),
-		"usage":         map[string]any{},
+		"usage":          map[string]any{},
 		"permission_denials": []any{
 			map[string]any{
 				"tool_name":   "Bash",
@@ -804,12 +804,12 @@ func TestParseMessage_ResultWithEmptyPermissionDenials(t *testing.T) {
 
 func TestParseMessage_ResultWithNoPermissionDenials(t *testing.T) {
 	data := map[string]any{
-		"type":       "result",
-		"subtype":    "success",
-		"session_id": "s-1",
+		"type":        "result",
+		"subtype":     "success",
+		"session_id":  "s-1",
 		"duration_ms": float64(100),
-		"is_error":   false,
-		"num_turns":  float64(1),
+		"is_error":    false,
+		"num_turns":   float64(1),
 	}
 	msg := ParseMessage(data)
 	rm := msg.(*ResultMessage)
